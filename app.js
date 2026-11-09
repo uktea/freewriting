@@ -1,0 +1,473 @@
+/* Functional JavaScript only: timer, minute input, writing protection, and export. */
+'use strict';
+
+const clampMinutes = (value) => Math.max(1, Math.min(180,
+  Math.round(String(value).trim() && Number.isFinite(Number(value)) ? Number(value) : 3)));
+const isInsertionAt = (before, after, position) => after.length >= before.length
+  && after.startsWith(before.slice(0, position))
+  && after.endsWith(before.slice(position));
+
+class WritingGuard {
+  constructor(editor, { active, onCommit, onCompositionEnd }) {
+    this.editor = editor;
+    this.active = active;
+    this.onCommit = onCommit;
+    this.onCompositionEnd = onCompositionEnd;
+    this.composing = false;
+    this.accepted = editor.value;
+    this.position = editor.selectionEnd;
+    editor.addEventListener('keydown', (event) => this.keydown(event));
+    editor.addEventListener('beforeinput', (event) => this.beforeinput(event));
+    editor.addEventListener('input', (event) => this.input(event));
+    editor.addEventListener('compositionstart', () => this.compositionstart());
+    editor.addEventListener('compositionend', (event) => this.compositionend(event));
+    editor.addEventListener('cut', (event) => {
+      if (this.active() && !this.composing) event.preventDefault();
+    });
+    editor.addEventListener('paste', () => {
+      if (this.active() && !this.composing) this.collapseSelection();
+    });
+    // Dragging selected text can delete its original location without a keypress.
+    editor.addEventListener('drop', (event) => {
+      if (this.active()) event.preventDefault();
+    });
+    editor.addEventListener('dragstart', (event) => {
+      if (this.active()) event.preventDefault();
+    });
+  }
+
+  reset() {
+    this.accepted = this.editor.value;
+    this.position = this.editor.selectionEnd;
+    this.composing = false;
+  }
+
+  collapseSelection() {
+    const end = this.editor.selectionEnd;
+    if (this.editor.selectionStart !== end) this.editor.setSelectionRange(end, end);
+    this.position = end;
+  }
+
+  keydown(event) {
+    if (!this.active() || this.composing || event.isComposing || event.keyCode === 229) return;
+    if (event.key === 'Backspace' || event.key === 'Delete'
+      || ((event.ctrlKey || event.metaKey) && ['x', 'z', 'y'].includes(event.key.toLowerCase()))) {
+      event.preventDefault();
+    }
+  }
+
+  beforeinput(event) {
+    if (!this.active()) return;
+    // Never cancel or rewrite an IME's provisional text. Some browsers report
+    // deleteContentBackward or insertText while a composition is still active.
+    if (this.composing || event.isComposing
+      || ['insertCompositionText', 'deleteCompositionText', 'insertFromComposition'].includes(event.inputType)) return;
+    if (event.inputType.startsWith('delete') || event.inputType.startsWith('history')) {
+      event.preventDefault();
+      return;
+    }
+    this.collapseSelection();
+    this.accepted = this.editor.value;
+  }
+
+  input(event) {
+    if (!this.active() || this.composing || event.isComposing) return;
+    if (!isInsertionAt(this.accepted, this.editor.value, this.position)) {
+      // Covers non-cancelable beforeinput, OS undo, and browser replacement.
+      this.editor.value = this.accepted;
+      this.editor.setSelectionRange(this.position, this.position);
+    }
+    this.accepted = this.editor.value;
+    this.position = this.editor.selectionEnd;
+    this.onCommit();
+  }
+
+  compositionstart() {
+    if (!this.active()) return;
+    this.collapseSelection();
+    this.compositionBase = this.editor.value;
+    this.compositionPosition = this.editor.selectionEnd;
+    this.composing = true;
+  }
+
+  compositionend(event) {
+    if (!this.composing) return;
+    this.composing = false;
+    const base = this.compositionBase;
+    const position = this.compositionPosition;
+    if (!isInsertionAt(base, this.editor.value, position)) {
+      // A selection or IME reconversion must never replace committed text.
+      const inserted = event.data || '';
+      this.editor.value = base.slice(0, position) + inserted + base.slice(position);
+      this.editor.setSelectionRange(position + inserted.length, position + inserted.length);
+    }
+    this.accepted = this.editor.value;
+    this.position = this.editor.selectionEnd;
+    this.onCommit();
+    this.onCompositionEnd();
+  }
+}
+
+function initializeApp() {
+  const $ = (id) => document.getElementById(id);
+  const editor = $('editor');
+  const minutes = $('minutes');
+  const storageKey = 'freewriting-session-v1';
+  let state = 'ready';
+  let duration = 3;
+  let totalSeconds = 180;
+  let deadline = 0;
+  let interval;
+  let pendingFinish = false;
+  let pendingReason = '';
+  let lastRenderedSecond = -1;
+  let sessionDate = new Date();
+  let storageAvailable = true;
+  let lastEscape = null;
+  const doubleEscapeMs = 400;
+
+  // Start before WritingGuard handles the same event. In particular, an IME's
+  // first compositionstart must reach the guard with writing already active.
+  function handleShortcut(event) {
+    if (event.defaultPrevented) return;
+    // Leave candidate selection, IME cancellation, and filename editing native.
+    if (event.isComposing || event.keyCode === 229 || guard.composing || $('save-dialog').open) {
+      lastEscape = null;
+      return;
+    }
+    if (event.repeat) {
+      if (event.key === 'Escape' || (state !== 'writing' && [' ', 'Enter'].includes(event.key))) event.preventDefault();
+      return;
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      lastEscape = null;
+      return;
+    }
+    const activate = event.key === ' ' || event.key === 'Enter';
+    const escape = event.key === 'Escape';
+    if (!escape) lastEscape = null;
+    if (state === 'finished' && (activate || escape)) {
+      event.preventDefault();
+      resetSession();
+      return;
+    }
+    if (state === 'ready' && activate) {
+      event.preventDefault();
+      prepareWriting();
+      return;
+    }
+    if (state === 'waiting') {
+      if (escape) {
+        event.preventDefault();
+        cancelWaiting();
+      } else if (!['Shift', 'Control', 'Alt', 'Meta', 'Tab', 'CapsLock'].includes(event.key)) {
+        if (event.target !== editor) event.preventDefault();
+        beginWriting();
+      }
+      return;
+    }
+    if (state === 'writing' && escape) {
+      event.preventDefault();
+      const now = Date.now();
+      if (lastEscape !== null && now - lastEscape <= doubleEscapeMs) {
+        lastEscape = null;
+        finish('中止しました。文章は残っています。');
+      } else {
+        lastEscape = now;
+      }
+    }
+  }
+  document.addEventListener('keydown', handleShortcut, true);
+  editor.addEventListener('keydown', handleShortcut, true);
+  editor.addEventListener('compositionstart', () => {
+    lastEscape = null;
+    beginWriting();
+  }, true);
+  editor.addEventListener('beforeinput', (event) => {
+    if (event.inputType.startsWith('insert')) beginWriting();
+  }, true);
+
+  const guard = new WritingGuard(editor, {
+    active: () => state === 'writing',
+    onCommit: () => persist(),
+    onCompositionEnd: () => {
+      if (pendingFinish) finish(pendingReason);
+    },
+  });
+
+  function announce(message) { $('status').textContent = message; }
+
+  function persist() {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify({
+        minutes: duration,
+        text: guard.composing ? guard.compositionBase : editor.value,
+        date: sessionDate.toISOString(),
+      }));
+    } catch {
+      storageAvailable = false;
+    }
+  }
+
+  function renderState() {
+    document.body.dataset.state = state;
+    const ready = state === 'ready';
+    const waiting = state === 'waiting';
+    const writing = state === 'writing';
+    const finished = state === 'finished';
+    $('start').hidden = !ready;
+    editor.hidden = !waiting && !writing && !finished;
+    editor.readOnly = !waiting && !writing;
+    editor.placeholder = waiting ? '何かキーを押して開始' : '';
+    $('stop').hidden = !waiting && !writing;
+    $('stop').setAttribute('aria-label', waiting ? '開始をキャンセル' : '執筆を中止して文章を残す');
+    $('stop').setAttribute('title', waiting ? 'キャンセル（Esc）' : '中止して文章を残す（Escを2回）');
+    $('time-setting').hidden = !ready;
+    $('time-remaining').hidden = ready;
+    $('result-actions').hidden = !finished;
+    $('copy').disabled = !editor.value;
+    $('save-open').disabled = !editor.value;
+    document.title = writing ? 'FreeWriting — 執筆中' : 'FreeWriting';
+  }
+
+  function updateDuration(value) {
+    if (state !== 'ready') return;
+    duration = clampMinutes(value);
+    minutes.value = String(duration);
+    minutes.setAttribute('aria-valuenow', String(duration));
+    totalSeconds = duration * 60;
+    $('timer').setAttribute('data-digits', duration >= 100 ? '3' : '2');
+    $('increase').disabled = duration === 180;
+    $('decrease').disabled = duration === 1;
+    persist();
+  }
+
+  function renderTime(seconds) {
+    if (seconds === lastRenderedSecond) return;
+    lastRenderedSecond = seconds;
+    $('timer').setAttribute('data-digits', totalSeconds >= 6000 ? '3' : '2');
+    const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
+    const ss = String(seconds % 60).padStart(2, '0');
+    $('remaining-minutes').textContent = mm;
+    $('remaining-seconds').textContent = ss;
+    $('time-remaining').setAttribute('aria-label', `残り${Math.floor(seconds / 60)}分${seconds % 60}秒`);
+    // The left edge is fixed; the right edge recedes to the left.
+    $('progress-line').setAttribute('width', String(180 * seconds / totalSeconds));
+  }
+
+  function prepareWriting() {
+    if (state !== 'ready') return;
+    updateDuration(minutes.value);
+    editor.value = '';
+    guard.reset();
+    lastEscape = null;
+    pendingFinish = false;
+    state = 'waiting';
+    lastRenderedSecond = -1;
+    renderTime(totalSeconds);
+    renderState();
+    editor.focus({ preventScroll: true });
+  }
+
+  function beginWriting() {
+    if (state !== 'waiting') return;
+    state = 'writing';
+    lastEscape = null;
+    sessionDate = new Date();
+    deadline = Date.now() + totalSeconds * 1000;
+    renderState();
+    if (document.activeElement !== editor) editor.focus({ preventScroll: true });
+    interval = setInterval(tick, 100);
+    persist();
+    announce('開始しました。');
+  }
+
+  function tick() {
+    const now = Date.now();
+    if (state === 'writing') {
+      const seconds = Math.max(0, Math.ceil((deadline - now) / 1000));
+      renderTime(seconds);
+      if (seconds === 0) finish('時間になりました。');
+    }
+  }
+
+  function finish(reason) {
+    clearInterval(interval);
+    if (guard.composing) {
+      // Let the current conversion commit before setting readonly. Locking the
+      // textarea at the deadline would discard Japanese provisional text.
+      pendingFinish = true;
+      pendingReason = reason;
+      return;
+    }
+    pendingFinish = false;
+    lastEscape = null;
+    state = 'finished';
+    renderState();
+    persist();
+    announce(reason);
+    $('restart').focus({ preventScroll: true });
+  }
+
+  function cancelWaiting() {
+    if (state !== 'waiting') return;
+    state = 'ready';
+    renderState();
+    $('progress-line').setAttribute('width', '180');
+    $('start').focus({ preventScroll: true });
+  }
+
+  $('start').addEventListener('click', prepareWriting);
+  $('stop').addEventListener('click', () => {
+    if (state === 'waiting') {
+      cancelWaiting();
+      return;
+    }
+    // Clicking the stop button normally commits the composition via blur first.
+    editor.blur();
+    finish('中止しました。文章は残っています。');
+  });
+  $('increase').addEventListener('click', () => updateDuration(duration + 1));
+  $('decrease').addEventListener('click', () => updateDuration(duration - 1));
+  minutes.addEventListener('change', () => updateDuration(minutes.value));
+  minutes.addEventListener('blur', () => updateDuration(minutes.value));
+  minutes.addEventListener('focus', () => minutes.select());
+  minutes.addEventListener('keydown', (event) => {
+    if (event.isComposing || event.keyCode === 229) return;
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      updateDuration(Number(minutes.value) + (event.key === 'ArrowUp' ? 1 : -1));
+    } else if (event.key === 'Enter') {
+      updateDuration(minutes.value);
+      minutes.blur();
+    }
+  });
+
+  let drag;
+  minutes.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || state !== 'ready') return;
+    drag = { y: event.clientY, value: clampMinutes(minutes.value), moved: false, id: event.pointerId };
+  });
+  window.addEventListener('pointermove', (event) => {
+    if (!drag || drag.id !== event.pointerId || state !== 'ready') return;
+    const difference = drag.y - event.clientY;
+    if (!drag.moved && Math.abs(difference) < 8) return;
+    if (!drag.moved) {
+      minutes.setPointerCapture(event.pointerId);
+      minutes.blur();
+      drag.moved = true;
+    }
+    event.preventDefault();
+    updateDuration(drag.value + Math.trunc(difference / 12));
+  }, { passive: false });
+  function endDrag(event) {
+    if (!drag || drag.id !== event.pointerId) return;
+    if (drag.moved && minutes.hasPointerCapture(event.pointerId)) minutes.releasePointerCapture(event.pointerId);
+    drag = undefined;
+  }
+  window.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', endDrag);
+
+  function resetSession() {
+    clearInterval(interval);
+    editor.value = '';
+    guard.reset();
+    lastEscape = null;
+    pendingFinish = false;
+    state = 'ready';
+    $('progress-line').setAttribute('width', '180');
+    renderState();
+    persist();
+    announce('時間を設定して開始できます。');
+    $('start').focus({ preventScroll: true });
+  }
+  $('restart').addEventListener('click', resetSession);
+  window.addEventListener('blur', () => { lastEscape = null; });
+
+  $('copy').addEventListener('click', async () => {
+    const button = $('copy');
+    const icon = button.querySelector('img');
+    try {
+      await navigator.clipboard.writeText(editor.value);
+    } catch {
+      editor.focus();
+      editor.select();
+      let copied = false;
+      try { copied = document.execCommand('copy'); } catch { /* File export remains available. */ }
+      if (!copied) {
+        announce('コピーできませんでした。選択中の文章を手動でコピーしてください。');
+        return;
+      }
+    }
+    icon.src = './icons/check.svg';
+    button.setAttribute('aria-label', 'コピーしました');
+    announce('コピーしました。');
+    setTimeout(() => {
+      icon.src = './icons/content_copy.svg';
+      button.setAttribute('aria-label', '文章をコピー');
+    }, 1800);
+  });
+
+  function defaultFilename() {
+    const pad = (n) => String(n).padStart(2, '0');
+    const d = sessionDate;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}.txt`;
+  }
+  $('save-open').addEventListener('click', () => {
+    $('filename').value = defaultFilename();
+    $('save-dialog').showModal();
+    $('filename').focus();
+    $('filename').setSelectionRange(0, $('filename').value.length - 4);
+  });
+  $('save-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    let filename = $('filename').value.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_').replace(/[. ]+$/, '');
+    if (!filename) filename = defaultFilename();
+    if (!filename.toLowerCase().endsWith('.txt')) filename += '.txt';
+    const blob = new Blob(['\uFEFF', editor.value], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    $('save-dialog').close();
+    announce('保存しました。');
+  });
+
+  // Background tabs may throttle intervals. Always recompute from the deadline.
+  document.addEventListener('visibilitychange', () => {
+    if (state === 'writing') tick();
+  });
+  window.addEventListener('pagehide', persist);
+  window.addEventListener('beforeunload', (event) => {
+    if (!storageAvailable && (editor.value || guard.composing)) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+  });
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(storageKey));
+    if (saved && typeof saved === 'object') {
+      duration = clampMinutes(saved.minutes);
+      if (typeof saved.text === 'string' && saved.text.length) {
+        editor.value = saved.text;
+        guard.reset();
+        state = 'finished';
+        const restoredDate = new Date(saved.date);
+        if (!Number.isNaN(restoredDate.getTime())) sessionDate = restoredDate;
+      }
+    }
+  } catch { /* Storage may be disabled; the writing session still works. */ }
+  minutes.value = String(duration);
+  totalSeconds = duration * 60;
+  renderState();
+  if (state === 'ready') updateDuration(duration);
+  else renderTime(0);
+}
+
+if (typeof document !== 'undefined') initializeApp();
+if (typeof module !== 'undefined') module.exports = { WritingGuard, clampMinutes, isInsertionAt };

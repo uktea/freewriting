@@ -1,0 +1,62 @@
+/* Native HTML controls; CSS is limited to layout, grayscale, and state visibility.
+   No animation, transition, external fonts, or CSS framework. */
+:root { --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Noto Sans Mono CJK JP", "Osaka-Mono", "MS Gothic", monospace; color-scheme: light; font-family: var(--font-mono); color: #303030; background: #fff; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; padding: 0 5%; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+button, a, input, textarea { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 2px solid #777; outline-offset: 5px; }
+a { color: inherit; }
+.site-header { max-width: 1120px; margin: auto; display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+.site-header { height: 112px; border-bottom: 1px solid #eee; }
+.wordmark { font: 400 28px var(--font-mono); text-decoration: none; }
+.icon-button { border: 0; background: transparent; padding: 8px; display: inline-flex; gap: 8px; align-items: center; justify-content: center; }
+.icon-button:hover { color: #222; background: #f3f3f3; }
+.icon-button { padding: 3px; }
+img { vertical-align: middle; }
+main { max-width: 760px; margin: auto; }
+.timer-area { text-align: center; margin: 76px auto 18px; }
+.timer { width: 5ch; margin: auto; position: relative; font: 64px/1.3 var(--font-mono); }
+.timer[data-digits="3"] { width: 7ch; }
+.time-setting { height: 89px; display: flex; align-items: baseline; justify-content: center; }
+.minute-entry { display: inline-flex; align-items: baseline; gap: 9px; }
+#minutes { width: 3ch; padding: 0; background: transparent; border: 0; text-align: center; font: 76px/1.1 var(--font-mono); cursor: ns-resize; touch-action: none; }
+#minutes:focus { cursor: text; }
+.unit { font-size: 12px; color: #888; }
+.stepper { visibility: hidden; position: absolute; left: calc(100% + 8px); top: 18px; display: grid; }
+.timer:hover .stepper, .timer:focus-within .stepper { visibility: visible; }
+.time-remaining { height: 89px; display: grid; grid-template-columns: minmax(0, 1fr) 1ch minmax(0, 1fr); align-items: baseline; font: inherit; font-variant-numeric: tabular-nums; }
+#remaining-minutes { text-align: right; }
+#remaining-seconds { text-align: left; }
+.colon { text-align: center; }
+.timer-line { display: block; width: 100%; height: 2px; }
+.paper-top { display: flex; justify-content: flex-end; align-items: center; min-height: 32px; margin-bottom: 8px; color: #888; font-size: 11px; }
+.paper { border: 1px solid #ddd; height: 380px; background: #fff; }
+.start-button { width: 100%; height: 100%; border: 0; background: #e9e9e9; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; }
+.start-button:hover { background: #dedede; }
+#editor { width: 100%; height: 100%; display: block; resize: none; padding: 29px 32px; border: 0; border-radius: 0; background: transparent; font-size: 16px; line-height: 2; outline-offset: 3px; }
+body[data-state="finished"] .paper { background: #e9e9e9; }
+.result-actions, .export-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.result-actions { margin-top: 10px; }
+.start-title { font-size: 22px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+#editor::placeholder { color: #999; }
+dialog { width: min(92vw, 500px); padding: 36px; border: 1px solid #ccc; color: #444; }
+dialog::backdrop { background: #0005; }
+.dialog-close { float: right; margin: -15px -15px 0 0; }
+dialog h2 { font-size: 19px; font-weight: 500; margin: 24px 0; }
+.plain-button { border: 1px solid #ccc; padding: 11px 18px; background: #eee; font-size: 12px; display: inline-flex; align-items: center; gap: 8px; }
+#save-form label { display: block; font-size: 12px; margin-bottom: 8px; }
+#filename { width: 100%; padding: 10px; border: 1px solid #ccc; font-size: 14px; }
+@media (hover: none) { .stepper { visibility: visible; } }
+@media (max-width: 600px) {
+  body { padding: 0 6%; }
+  .site-header { height: 84px; }
+  .wordmark { font-size: 25px; }
+  .timer-area { margin-top: 46px; margin-bottom: 25px; }
+  .paper { height: 345px; }
+  #editor { padding: 22px; }
+}

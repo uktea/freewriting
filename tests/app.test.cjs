@@ -124,6 +124,7 @@ test('shorter kanji candidates and katakana conversion still work before commit'
 test('committed text cannot be reconverted or replaced by spelling suggestions', () => {
   const { editor } = setupGuard('確定済み');
   assert.equal(send(editor, 'keydown', { key: 'Convert' }).defaultPrevented, true);
+  assert.equal(send(editor, 'keydown', { key: 'Process', code: 'Convert', keyCode: 229 }).defaultPrevented, true);
   assert.equal(send(editor, 'beforeinput', { inputType: 'insertReplacementText' }).defaultPrevented, true);
   editor.value = '修正した文字';
   send(editor, 'input', { inputType: 'insertReplacementText' });

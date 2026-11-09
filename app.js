@@ -68,7 +68,7 @@ class WritingGuard {
       || ((event.ctrlKey || event.metaKey) && ['x', 'z', 'y'].includes((event.key || '').toLowerCase()))) {
       event.preventDefault();
     }
-    if (!this.composing && !event.isComposing && event.key === 'Convert') event.preventDefault();
+    if (!this.composing && (event.key === 'Convert' || event.code === 'Convert')) event.preventDefault();
   }
 
   beforeinput(event) {

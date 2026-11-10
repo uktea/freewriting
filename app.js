@@ -140,6 +140,7 @@ function initializeApp() {
   const $ = (id) => document.getElementById(id);
   const editor = $('editor');
   const minutes = $('minutes');
+  const showTimer = $('show-timer');
   const storageKey = 'freewriting-session-v1';
   let state = 'ready';
   let duration = 3;
@@ -173,6 +174,8 @@ function initializeApp() {
     }
     const activate = event.key === ' ' || event.key === 'Enter';
     const escape = event.key === 'Escape';
+    // A focused checkbox keeps its native Space-to-toggle operation.
+    if (state === 'ready' && event.target === showTimer && event.key === ' ') return;
     if (!escape) lastEscape = null;
     if (state === 'finished' && (activate || escape)) {
       event.preventDefault();
@@ -231,6 +234,7 @@ function initializeApp() {
         minutes: duration,
         text: state === 'writing' ? guard.accepted : editor.value,
         date: sessionDate.toISOString(),
+        showTimer: showTimer.checked,
       }));
     } catch {
       storageAvailable = false;
@@ -243,6 +247,7 @@ function initializeApp() {
     const waiting = state === 'waiting';
     const writing = state === 'writing';
     const finished = state === 'finished';
+    const timerHidden = !ready && !showTimer.checked;
     $('start').hidden = !ready;
     editor.hidden = !waiting && !writing && !finished;
     editor.readOnly = !waiting && !writing;
@@ -250,8 +255,18 @@ function initializeApp() {
     $('stop').hidden = !waiting && !writing;
     $('stop').setAttribute('aria-label', waiting ? '開始をキャンセル' : '執筆を中止して文章を残す');
     $('stop').setAttribute('title', waiting ? 'キャンセル（Esc）' : '中止して文章を残す（Escを2回）');
-    $('time-setting').hidden = !ready;
-    $('time-remaining').hidden = ready;
+    // Keep both layers rendered for the timer-only CSS transition, while the
+    // inactive layer is excluded from focus, interaction, and accessibility.
+    $('time-setting').inert = !ready;
+    $('time-setting').setAttribute('aria-hidden', String(!ready));
+    $('time-remaining').inert = ready || timerHidden;
+    $('time-remaining').setAttribute('aria-hidden', String(ready || timerHidden));
+    $('timer').inert = timerHidden;
+    $('timer').setAttribute('data-suppressed', String(timerHidden));
+    $('timer').setAttribute('aria-hidden', String(timerHidden));
+    showTimer.disabled = !ready;
+    $('timer-option').inert = !ready;
+    $('timer-option').setAttribute('aria-hidden', String(!ready));
     $('result-actions').hidden = !finished;
     $('copy').disabled = !editor.value;
     $('save-open').disabled = !editor.value;
@@ -262,12 +277,17 @@ function initializeApp() {
     if (state !== 'ready') return;
     duration = clampMinutes(value);
     minutes.value = String(duration);
+    updateInputWidth();
     minutes.setAttribute('aria-valuenow', String(duration));
     totalSeconds = duration * 60;
     $('timer').setAttribute('data-digits', duration >= 100 ? '3' : '2');
     $('increase').disabled = duration === 180;
     $('decrease').disabled = duration === 1;
     persist();
+  }
+
+  function updateInputWidth() {
+    $('timer').setAttribute('data-input-digits', String(Math.max(1, Math.min(3, minutes.value.length))));
   }
 
   function renderTime(seconds) {
@@ -279,8 +299,13 @@ function initializeApp() {
     $('remaining-minutes').textContent = mm;
     $('remaining-seconds').textContent = ss;
     $('time-remaining').setAttribute('aria-label', `残り${Math.floor(seconds / 60)}分${seconds % 60}秒`);
-    // The left edge is fixed; the right edge recedes to the left.
-    $('progress-line').setAttribute('width', String(180 * seconds / totalSeconds));
+  }
+
+  function renderProgress(milliseconds) {
+    // Independent of the whole-second digits: the existing 100ms timer feeds
+    // short linear CSS transitions, always recomputed from the real deadline.
+    const ratio = Math.max(0, Math.min(1, milliseconds / (totalSeconds * 1000)));
+    $('progress-line').setAttribute('width', String(180 * ratio));
   }
 
   function prepareWriting() {
@@ -293,6 +318,7 @@ function initializeApp() {
     state = 'waiting';
     lastRenderedSecond = -1;
     renderTime(totalSeconds);
+    renderProgress(totalSeconds * 1000);
     renderState();
     editor.focus({ preventScroll: true });
   }
@@ -313,8 +339,10 @@ function initializeApp() {
   function tick() {
     const now = Date.now();
     if (state === 'writing') {
-      const seconds = Math.max(0, Math.ceil((deadline - now) / 1000));
+      const milliseconds = Math.max(0, deadline - now);
+      const seconds = Math.ceil(milliseconds / 1000);
       renderTime(seconds);
+      renderProgress(milliseconds);
       if (seconds === 0) finish('時間になりました。');
     }
   }
@@ -342,7 +370,7 @@ function initializeApp() {
     if (state !== 'waiting') return;
     state = 'ready';
     renderState();
-    $('progress-line').setAttribute('width', '180');
+    renderProgress(totalSeconds * 1000);
     $('start').focus({ preventScroll: true });
   }
 
@@ -358,6 +386,33 @@ function initializeApp() {
   });
   $('increase').addEventListener('click', () => updateDuration(duration + 1));
   $('decrease').addEventListener('click', () => updateDuration(duration - 1));
+  minutes.addEventListener('input', () => {
+    if (state === 'ready') updateInputWidth();
+  });
+  showTimer.addEventListener('change', () => {
+    if (state !== 'ready') return;
+    persist();
+    renderState();
+  });
+
+  let wheelDelta = 0;
+  let lastWheelAt = 0;
+  $('timer').addEventListener('wheel', (event) => {
+    if (state !== 'ready' || event.ctrlKey || event.metaKey || event.shiftKey || !event.deltaY) return;
+    event.preventDefault();
+    const now = Date.now();
+    if (now - lastWheelAt > 200 || Math.sign(wheelDelta) !== Math.sign(event.deltaY)) wheelDelta = 0;
+    lastWheelAt = now;
+    // One mouse notch changes one minute; accumulate small trackpad deltas
+    // instead of treating every pixel as a separate step.
+    const units = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 800 : 1;
+    wheelDelta += event.deltaY * units;
+    if (Math.abs(wheelDelta) >= 40) {
+      updateDuration(clampMinutes(minutes.value) - Math.sign(wheelDelta));
+      wheelDelta = 0;
+    }
+  }, { passive: false });
+  $('timer').addEventListener('mouseleave', () => { wheelDelta = 0; });
   minutes.addEventListener('change', () => updateDuration(minutes.value));
   minutes.addEventListener('blur', () => updateDuration(minutes.value));
   minutes.addEventListener('focus', () => minutes.select());
@@ -404,7 +459,7 @@ function initializeApp() {
     lastEscape = null;
     pendingFinish = false;
     state = 'ready';
-    $('progress-line').setAttribute('width', '180');
+    renderProgress(totalSeconds * 1000);
     renderState();
     persist();
     announce('時間を設定して開始できます。');
@@ -482,6 +537,7 @@ function initializeApp() {
     const saved = JSON.parse(localStorage.getItem(storageKey));
     if (saved && typeof saved === 'object') {
       duration = clampMinutes(saved.minutes);
+      if (typeof saved.showTimer === 'boolean') showTimer.checked = saved.showTimer;
       if (typeof saved.text === 'string' && saved.text.length) {
         editor.value = saved.text;
         guard.reset();
@@ -492,10 +548,14 @@ function initializeApp() {
     }
   } catch { /* Storage may be disabled; the writing session still works. */ }
   minutes.value = String(duration);
+  updateInputWidth();
   totalSeconds = duration * 60;
   renderState();
   if (state === 'ready') updateDuration(duration);
-  else renderTime(0);
+  else {
+    renderTime(0);
+    renderProgress(0);
+  }
 }
 
 if (typeof document !== 'undefined') initializeApp();

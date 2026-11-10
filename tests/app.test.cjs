@@ -20,8 +20,10 @@ class Element extends EventTarget {
   showModal() { this.open = true; } close() { this.open = false; }
 }
 function send(element, type, props = {}) {
-  const event = new Event(type, { cancelable: true });
-  for (const [key, value] of Object.entries(props)) Object.defineProperty(event, key, { value });
+  const event = new Event(type, { cancelable: props.cancelable !== false });
+  for (const [key, value] of Object.entries(props)) {
+    if (key !== 'cancelable') Object.defineProperty(event, key, { value });
+  }
   element.dispatchEvent(event);
   return event;
 }
@@ -40,6 +42,19 @@ function nativeInsert(editor, text) {
   editor.value = editor.value.slice(0, position) + text + editor.value.slice(editor.selectionEnd);
   editor.setSelectionRange(position + text.length, position + text.length);
   send(editor, 'input', { inputType: 'insertText' });
+}
+function imeUpdate(editor, guard, text, { inputType = 'insertCompositionText', cancelable = false } = {}) {
+  const base = guard.compositionBase;
+  const position = guard.compositionPosition;
+  send(editor, 'compositionupdate', { data: text });
+  const event = send(editor, 'beforeinput', { inputType, data: text, isComposing: true, cancelable });
+  // Emulate the OS applying the edit even after preventDefault on a keydown.
+  if (!event.defaultPrevented) {
+    editor.value = base.slice(0, position) + text + base.slice(position);
+    editor.setSelectionRange(position + text.length, position + text.length);
+    send(editor, 'input', { inputType, data: text, isComposing: true });
+  }
+  return event;
 }
 
 test('minute settings are whole minutes within 1–180', () => {
@@ -80,9 +95,7 @@ test('Japanese conversion is allowed while manual deletion of provisional text i
   }
   editor.value = '本文にほんご';
   send(editor, 'input', { isComposing: true });
-  editor.value = '本文にほん';
-  send(editor, 'input', { isComposing: true });
-  assert.equal(editor.value, '本文にほん');
+  send(editor, 'keydown', { key: 'Process', code: 'Space', keyCode: 229, isComposing: true });
   editor.value = '本文日本語';
   editor.setSelectionRange(5, 5);
   send(editor, 'compositionend', { data: '日本語' });
@@ -98,6 +111,126 @@ test('physical deletion keys are blocked even when the IME reports Process/229',
     assert.equal(send(editor, 'keydown', { key: 'Process', code, keyCode: 229, isComposing: true }).defaultPrevented, true);
   }
   assert.equal(send(editor, 'keydown', { key: 'Process', code: 'KeyA', keyCode: 229, isComposing: true }).defaultPrevented, false);
+});
+test('Microsoft-style non-cancelable composition deletion preserves and commits the previous reading', () => {
+  const { editor, guard } = setupGuard('本文');
+  send(editor, 'compositionstart');
+  imeUpdate(editor, guard, 'にほんご');
+  send(editor, 'keydown', { key: 'Process', code: '', keyCode: 229, isComposing: true });
+  const event = imeUpdate(editor, guard, 'にほん');
+  assert.equal(event.cancelable, false);
+  assert.equal(editor.value, '本文にほんご');
+  assert.equal(guard.accepted, '本文にほんご');
+  assert.equal(guard.composing, false);
+  editor.value = '本文にほん';
+  send(editor, 'compositionend', { data: 'にほん' });
+  assert.equal(editor.value, '本文にほんご');
+});
+test('IME deletion is detected even when only the input event is delivered', () => {
+  const { editor, guard } = setupGuard('本文');
+  send(editor, 'compositionstart');
+  imeUpdate(editor, guard, 'あいうえお');
+  editor.value = '本文あいえお';
+  editor.setSelectionRange(6, 6);
+  send(editor, 'input', { inputType: 'insertCompositionText', data: 'あいえお', isComposing: true });
+  assert.equal(editor.value, '本文あいうえお');
+  assert.equal(guard.accepted, '本文あいうえお');
+});
+test('full deletion of an underlined word cannot erase its protected reading', () => {
+  const { editor, guard } = setupGuard();
+  send(editor, 'compositionstart');
+  imeUpdate(editor, guard, 'きゃ');
+  send(editor, 'keydown', { key: 'Process', keyCode: 229, isComposing: true });
+  imeUpdate(editor, guard, '');
+  assert.equal(editor.value, '文章きゃ');
+  assert.equal(guard.accepted, '文章きゃ');
+});
+test('roman-to-kana, kanji, katakana and Unicode normalization remain editable candidates', () => {
+  const { editor, guard } = setupGuard('本文');
+  send(editor, 'compositionstart');
+  for (const text of ['n', 'に', 'にh', 'にほ', 'にほn', 'にほん']) imeUpdate(editor, guard, text);
+  send(editor, 'keydown', { key: 'Process', code: 'Space', keyCode: 229, isComposing: true });
+  imeUpdate(editor, guard, '日本');
+  assert.equal(guard.composing, true);
+  send(editor, 'keydown', { key: 'F7', code: 'F7', isComposing: true });
+  imeUpdate(editor, guard, 'ニホン');
+  assert.equal(editor.value, '本文ニホン');
+  assert.equal(guard.composing, true);
+  send(editor, 'keydown', { key: 'Enter', isComposing: true });
+  send(editor, 'compositionend', { data: 'ニホン' });
+  assert.equal(editor.value, '本文ニホン');
+  send(editor, 'keydown', { key: 'Process', code: 'KeyK', keyCode: 229 });
+  send(editor, 'compositionstart');
+  imeUpdate(editor, guard, 'か\u3099');
+  imeUpdate(editor, guard, 'が');
+  assert.equal(guard.composing, true);
+  send(editor, 'compositionend', { data: 'が' });
+  assert.equal(editor.value, '本文ニホンが');
+});
+test('an explicit conversion can choose a shorter candidate without triggering deletion recovery', () => {
+  const { editor, guard } = setupGuard();
+  send(editor, 'compositionstart');
+  imeUpdate(editor, guard, '山山');
+  send(editor, 'keydown', { key: 'Process', code: 'Space', keyCode: 229, isComposing: true });
+  imeUpdate(editor, guard, '山');
+  assert.equal(editor.value, '文章山');
+  assert.equal(guard.composing, true);
+});
+test('ending the native composition during recovery notifies completion once and allows new writing', () => {
+  const editor = new Element('本文');
+  let ended = 0;
+  const guard = new WritingGuard(editor, { active: () => true, onCommit: () => {}, onCompositionEnd: () => ended++ });
+  send(editor, 'compositionstart');
+  imeUpdate(editor, guard, 'にほん');
+  editor.blur = () => send(editor, 'compositionend', { data: 'にほ' });
+  send(editor, 'keydown', { key: 'Process', code: '', keyCode: 229, isComposing: true });
+  imeUpdate(editor, guard, 'にほ');
+  assert.equal(ended, 1);
+  assert.equal(editor.value, '本文にほん');
+  send(editor, 'compositionend', { data: 'にほ' });
+  assert.equal(ended, 1);
+  send(editor, 'keydown', { key: 'Process', code: 'KeyT', keyCode: 229 });
+  send(editor, 'compositionstart');
+  imeUpdate(editor, guard, 'つぎ');
+  send(editor, 'keydown', { key: 'Process', code: 'Space', keyCode: 229, isComposing: true });
+  imeUpdate(editor, guard, '次');
+  send(editor, 'compositionend', { data: '次' });
+  assert.equal(editor.value, '本文にほん次');
+});
+test('late native commit input cannot duplicate a composition repaired at compositionend', () => {
+  const { editor, guard } = setupGuard('本文');
+  send(editor, 'compositionstart');
+  imeUpdate(editor, guard, 'にほん');
+  send(editor, 'keydown', { key: 'Enter', isComposing: true });
+  // Some engines report the final data before their final DOM edit.
+  send(editor, 'compositionend', { data: '日本' });
+  editor.value = '本文日本日本';
+  send(editor, 'input', { inputType: 'insertFromComposition', data: '日本', isComposing: false });
+  assert.equal(editor.value, '本文日本');
+});
+test('normal committed IME characters may be followed by the same character without a keydown', () => {
+  const { editor, guard } = setupGuard('本文');
+  send(editor, 'compositionstart');
+  imeUpdate(editor, guard, 'あ');
+  send(editor, 'compositionend', { data: 'あ' });
+  const event = send(editor, 'beforeinput', { inputType: 'insertText', data: 'あ' });
+  assert.equal(event.defaultPrevented, false);
+  editor.value = '本文ああ';
+  editor.setSelectionRange(4, 4);
+  send(editor, 'input', { inputType: 'insertText', data: 'あ' });
+  assert.equal(editor.value, '本文ああ');
+});
+test('incremental insertText data during composition is not mistaken for a shortened word', () => {
+  const { editor, guard } = setupGuard('本文');
+  send(editor, 'compositionstart');
+  imeUpdate(editor, guard, 'かな');
+  const event = send(editor, 'beforeinput', { inputType: 'insertText', data: 'な', isComposing: true });
+  assert.equal(event.defaultPrevented, false);
+  editor.value = '本文かなな';
+  editor.setSelectionRange(5, 5);
+  send(editor, 'input', { inputType: 'insertText', data: 'な', isComposing: true });
+  assert.equal(guard.composing, true);
+  assert.equal(editor.value, '本文かなな');
 });
 test('manual beforeinput deletion and undo are blocked during composition', () => {
   const { editor } = setupGuard('本文');
@@ -147,13 +280,14 @@ test('reconversion cannot overwrite previously committed text', () => {
   send(editor, 'compositionend', { data: '変換' });
   assert.equal(editor.value, '確定文字');
 });
-test('canceling an IME conversion preserves the original committed text', () => {
+test('canceling an IME conversion cannot erase provisional text already typed', () => {
   const { editor } = setupGuard('もとの文章');
   send(editor, 'compositionstart');
   editor.value += 'みかくてい';
+  send(editor, 'input', { inputType: 'insertCompositionText', isComposing: true });
   editor.value = 'もとの文章';
   send(editor, 'compositionend', { data: '' });
-  assert.equal(editor.value, 'もとの文章');
+  assert.equal(editor.value, 'もとの文章みかくてい');
 });
 
 test('a delayed IME deletion cannot become the baseline for the next input', () => {
@@ -202,12 +336,12 @@ test('a missing compositionstart cannot allow reconversion to replace committed 
 test('the DOM is not rewritten during active candidate editing', () => {
   const { editor, guard } = setupGuard('本文');
   send(editor, 'compositionstart');
-  editor.value = '本にほん';
-  send(editor, 'beforeinput', { inputType: 'deleteContentBackward', isComposing: true });
+  editor.value = '本文にほん';
+  send(editor, 'beforeinput', { inputType: 'insertCompositionText', isComposing: true });
   send(editor, 'input', { isComposing: true });
-  assert.equal(editor.value, '本にほん');
+  assert.equal(editor.value, '本文にほん');
   assert.equal(guard.accepted, '本文');
-  editor.value = '本日本';
+  editor.value = '本文日本';
   send(editor, 'compositionend', { data: '日本' });
   assert.equal(editor.value, '本文日本');
 });
@@ -368,6 +502,27 @@ test('deadline during Japanese composition waits for commit without dropping cha
   assert.equal(a.elements.editor.value, '本文日本語');
   const saved = JSON.parse(a.storage.get('freewriting-session-v1'));
   assert.equal(saved.text, '本文日本語');
+});
+test('IME deletion recovery at the deadline finishes once and protects late native updates', () => {
+  const a = app();
+  a.elements.minutes.value = '1'; send(a.elements.minutes, 'change');
+  a.elements.start.click(); nativeInsert(a.elements.editor, '本文');
+  send(a.elements.editor, 'compositionstart');
+  const snapshot = { compositionBase: '本文', compositionPosition: 2 };
+  imeUpdate(a.elements.editor, snapshot, 'にほんご');
+  a.advance(60000);
+  assert.equal(a.state(), 'writing');
+  send(a.elements.editor, 'keydown', { key: 'Process', code: '', keyCode: 229, isComposing: true });
+  imeUpdate(a.elements.editor, snapshot, 'にほん');
+  assert.equal(a.state(), 'finished');
+  assert.equal(a.elements.editor.readOnly, true);
+  assert.equal(a.elements.editor.value, '本文にほんご');
+  assert.equal(a.elements['remaining-minutes'].textContent, '00');
+  assert.equal(a.elements['remaining-seconds'].textContent, '00');
+  a.elements.editor.value = '本文にほん';
+  send(a.elements.editor, 'input', { inputType: 'insertCompositionText', data: 'にほん', isComposing: true });
+  assert.equal(a.elements.editor.value, '本文にほんご');
+  assert.equal(JSON.parse(a.storage.get('freewriting-session-v1')).text, '本文にほんご');
 });
 test('two quick Escape presses stop writing and preserve the text', () => {
   const a = app();

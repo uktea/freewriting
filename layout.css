@@ -35,7 +35,7 @@ body:not([data-state="ready"]) .time-setting { opacity: 0; transform: translateX
 .unit { font-size: 12px; color: #888; }
 .stepper { visibility: hidden; position: absolute; left: 100%; padding-left: 4px; top: 18px; display: grid; }
 .timer:hover .stepper, .timer:focus-within .stepper { visibility: visible; }
-.timer-option { position: absolute; left: calc(100% + 34px); bottom: 11px; display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.timer-option { display: flex; align-items: center; gap: 5px; cursor: pointer; }
 .timer-option input { margin: 0; accent-color: #555; }
 body:not([data-state="ready"]) .timer-option { visibility: hidden; }
 .time-remaining { grid-area: 1 / 1; height: 89px; display: grid; grid-template-columns: minmax(0, 1fr) 1ch minmax(0, 1fr); align-items: baseline; font: inherit; font-variant-numeric: tabular-nums; opacity: 1; transform: translateX(0); pointer-events: none; transition: opacity 200ms ease, transform 280ms ease; }

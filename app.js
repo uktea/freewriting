@@ -140,7 +140,7 @@ function initializeApp() {
   const $ = (id) => document.getElementById(id);
   const editor = $('editor');
   const minutes = $('minutes');
-  const showTimer = $('show-timer');
+  const hideTimer = $('hide-timer');
   const storageKey = 'freewriting-session-v1';
   let state = 'ready';
   let duration = 3;
@@ -150,6 +150,7 @@ function initializeApp() {
   let pendingFinish = false;
   let pendingReason = '';
   let lastRenderedSecond = -1;
+  let lastTimeMasked = null;
   let sessionDate = new Date();
   let storageAvailable = true;
   let lastEscape = null;
@@ -175,7 +176,7 @@ function initializeApp() {
     const activate = event.key === ' ' || event.key === 'Enter';
     const escape = event.key === 'Escape';
     // A focused checkbox keeps its native Space-to-toggle operation.
-    if (state === 'ready' && event.target === showTimer && event.key === ' ') return;
+    if (state === 'ready' && event.target === hideTimer && event.key === ' ') return;
     if (!escape) lastEscape = null;
     if (state === 'finished' && (activate || escape)) {
       event.preventDefault();
@@ -234,7 +235,7 @@ function initializeApp() {
         minutes: duration,
         text: state === 'writing' ? guard.accepted : editor.value,
         date: sessionDate.toISOString(),
-        showTimer: showTimer.checked,
+        showTimer: !hideTimer.checked,
       }));
     } catch {
       storageAvailable = false;
@@ -247,7 +248,7 @@ function initializeApp() {
     const waiting = state === 'waiting';
     const writing = state === 'writing';
     const finished = state === 'finished';
-    const timerHidden = !ready && !showTimer.checked;
+    const timerMasked = (waiting || writing) && hideTimer.checked;
     $('start').hidden = !ready;
     editor.hidden = !waiting && !writing && !finished;
     editor.readOnly = !waiting && !writing;
@@ -259,18 +260,18 @@ function initializeApp() {
     // inactive layer is excluded from focus, interaction, and accessibility.
     $('time-setting').inert = !ready;
     $('time-setting').setAttribute('aria-hidden', String(!ready));
-    $('time-remaining').inert = ready || timerHidden;
-    $('time-remaining').setAttribute('aria-hidden', String(ready || timerHidden));
-    $('timer').inert = timerHidden;
-    $('timer').setAttribute('data-suppressed', String(timerHidden));
-    $('timer').setAttribute('aria-hidden', String(timerHidden));
-    showTimer.disabled = !ready;
+    $('time-remaining').inert = ready;
+    $('time-remaining').setAttribute('aria-hidden', String(ready));
+    $('timer').setAttribute('data-masked', String(timerMasked));
+    hideTimer.disabled = !ready;
+    $('timer-visibility-icon').src = hideTimer.checked ? './icons/visibility_off.svg' : './icons/visibility.svg';
     $('timer-option').inert = !ready;
     $('timer-option').setAttribute('aria-hidden', String(!ready));
     $('result-actions').hidden = !finished;
     $('copy').disabled = !editor.value;
     $('save-open').disabled = !editor.value;
     document.title = writing ? 'FreeWriting — 執筆中' : 'FreeWriting';
+    if (!ready && lastRenderedSecond >= 0) renderTime(lastRenderedSecond);
   }
 
   function updateDuration(value) {
@@ -291,14 +292,16 @@ function initializeApp() {
   }
 
   function renderTime(seconds) {
-    if (seconds === lastRenderedSecond) return;
+    const masked = (state === 'waiting' || state === 'writing') && hideTimer.checked;
+    if (seconds === lastRenderedSecond && masked === lastTimeMasked) return;
     lastRenderedSecond = seconds;
+    lastTimeMasked = masked;
     $('timer').setAttribute('data-digits', totalSeconds >= 6000 ? '3' : '2');
     const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
     const ss = String(seconds % 60).padStart(2, '0');
-    $('remaining-minutes').textContent = mm;
-    $('remaining-seconds').textContent = ss;
-    $('time-remaining').setAttribute('aria-label', `残り${Math.floor(seconds / 60)}分${seconds % 60}秒`);
+    $('remaining-minutes').textContent = masked ? '--' : mm;
+    $('remaining-seconds').textContent = masked ? '--' : ss;
+    $('time-remaining').setAttribute('aria-label', masked ? '残り時間は非表示' : `残り${Math.floor(seconds / 60)}分${seconds % 60}秒`);
   }
 
   function renderProgress(milliseconds) {
@@ -389,7 +392,7 @@ function initializeApp() {
   minutes.addEventListener('input', () => {
     if (state === 'ready') updateInputWidth();
   });
-  showTimer.addEventListener('change', () => {
+  hideTimer.addEventListener('change', () => {
     if (state !== 'ready') return;
     persist();
     renderState();
@@ -537,7 +540,7 @@ function initializeApp() {
     const saved = JSON.parse(localStorage.getItem(storageKey));
     if (saved && typeof saved === 'object') {
       duration = clampMinutes(saved.minutes);
-      if (typeof saved.showTimer === 'boolean') showTimer.checked = saved.showTimer;
+      if (typeof saved.showTimer === 'boolean') hideTimer.checked = !saved.showTimer;
       if (typeof saved.text === 'string' && saved.text.length) {
         editor.value = saved.text;
         guard.reset();

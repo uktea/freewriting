@@ -1,6 +1,7 @@
 /* Native HTML controls; CSS is limited to layout, grayscale, and state visibility.
-   No animation, transition, external fonts, or CSS framework. */
-:root { --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Noto Sans Mono CJK JP", "Osaka-Mono", "MS Gothic", monospace; color-scheme: light; font-family: var(--font-mono); color: #303030; background: #fff; }
+   No animation, transition, external requests, or CSS framework. */
+@font-face { font-family: "FreeWriting Mono"; src: url("./fonts/BIZUDGothic-Regular.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; }
+:root { --font-mono: "FreeWriting Mono", ui-monospace, monospace; color-scheme: light; font-family: var(--font-mono); color: #303030; background: #fff; }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { margin: 0; padding: 0 5%; }

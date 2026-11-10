@@ -14,6 +14,7 @@ class WritingGuard {
     this.onCommit = onCommit;
     this.onCompositionEnd = onCompositionEnd;
     this.composing = false;
+    this.reconverting = false;
     this.accepted = editor.value;
     this.position = editor.selectionEnd;
     editor.addEventListener('keydown', (event) => this.keydown(event));
@@ -22,7 +23,7 @@ class WritingGuard {
     editor.addEventListener('compositionstart', () => this.compositionstart());
     editor.addEventListener('compositionend', (event) => this.compositionend(event));
     editor.addEventListener('cut', (event) => {
-      if (this.active() && !this.composing) event.preventDefault();
+      if (this.active()) event.preventDefault();
     });
     editor.addEventListener('paste', () => {
       if (this.active() && !this.composing) this.collapseSelection();
@@ -40,6 +41,7 @@ class WritingGuard {
     this.accepted = this.editor.value;
     this.position = this.editor.selectionEnd;
     this.composing = false;
+    this.reconverting = false;
   }
 
   collapseSelection() {
@@ -48,26 +50,45 @@ class WritingGuard {
     this.position = end;
   }
 
+  restoreCommitted() {
+    // Only call outside an active composition. Browser/IME events can arrive
+    // with a modified DOM value before the next cancelable beforeinput.
+    if (this.editor.value !== this.accepted) {
+      this.editor.value = this.accepted;
+      this.editor.setSelectionRange(this.position, this.position);
+    }
+  }
+
   keydown(event) {
-    if (!this.active() || this.composing || event.isComposing || event.keyCode === 229) return;
-    if (event.key === 'Backspace' || event.key === 'Delete'
-      || ((event.ctrlKey || event.metaKey) && ['x', 'z', 'y'].includes(event.key.toLowerCase()))) {
+    if (!this.active()) return;
+    // IMEs often report key="Process" / keyCode=229 but retain the physical
+    // code. Block explicit deletion without canceling candidate replacement.
+    if (['Backspace', 'Delete'].includes(event.key) || ['Backspace', 'Delete'].includes(event.code)
+      || [8, 46].includes(event.keyCode)
+      || ((event.ctrlKey || event.metaKey) && ['x', 'z', 'y'].includes((event.key || '').toLowerCase()))) {
       event.preventDefault();
     }
+    if (!this.composing && (event.key === 'Convert' || event.code === 'Convert')) event.preventDefault();
   }
 
   beforeinput(event) {
     if (!this.active()) return;
-    // Never cancel or rewrite an IME's provisional text. Some browsers report
-    // deleteContentBackward or insertText while a composition is still active.
+    // Manual deletion/undo are forbidden even for underlined provisional text.
+    // deleteCompositionText is an IME operation used to replace a candidate.
+    if ((event.inputType.startsWith('delete') && event.inputType !== 'deleteCompositionText')
+      || event.inputType.startsWith('history')) {
+      event.preventDefault();
+      return;
+    }
+    // Leave native candidate replacement and phonetic-to-kanji conversion alone.
     if (this.composing || event.isComposing
       || ['insertCompositionText', 'deleteCompositionText', 'insertFromComposition'].includes(event.inputType)) return;
-    if (event.inputType.startsWith('delete') || event.inputType.startsWith('history')) {
+    this.restoreCommitted();
+    if (event.inputType === 'insertReplacementText') {
       event.preventDefault();
       return;
     }
     this.collapseSelection();
-    this.accepted = this.editor.value;
   }
 
   input(event) {
@@ -83,24 +104,31 @@ class WritingGuard {
   }
 
   compositionstart() {
-    if (!this.active()) return;
+    if (!this.active() || this.composing) return;
+    this.reconverting = this.editor.selectionStart !== this.editor.selectionEnd;
+    this.restoreCommitted();
     this.collapseSelection();
-    this.compositionBase = this.editor.value;
+    this.compositionBase = this.accepted;
     this.compositionPosition = this.editor.selectionEnd;
     this.composing = true;
   }
 
   compositionend(event) {
-    if (!this.composing) return;
+    if (!this.composing && !this.active()) return;
+    const hadComposition = this.composing;
+    const base = this.composing ? this.compositionBase : this.accepted;
+    const position = this.composing ? this.compositionPosition : this.position;
     this.composing = false;
-    const base = this.compositionBase;
-    const position = this.compositionPosition;
-    if (!isInsertionAt(base, this.editor.value, position)) {
+    if (this.reconverting || (!hadComposition && !isInsertionAt(base, this.editor.value, position))) {
+      this.editor.value = base;
+      this.editor.setSelectionRange(position, position);
+    } else if (!isInsertionAt(base, this.editor.value, position)) {
       // A selection or IME reconversion must never replace committed text.
       const inserted = event.data || '';
       this.editor.value = base.slice(0, position) + inserted + base.slice(position);
       this.editor.setSelectionRange(position + inserted.length, position + inserted.length);
     }
+    this.reconverting = false;
     this.accepted = this.editor.value;
     this.position = this.editor.selectionEnd;
     this.onCommit();
@@ -201,7 +229,7 @@ function initializeApp() {
     try {
       localStorage.setItem(storageKey, JSON.stringify({
         minutes: duration,
-        text: guard.composing ? guard.compositionBase : editor.value,
+        text: state === 'writing' ? guard.accepted : editor.value,
         date: sessionDate.toISOString(),
       }));
     } catch {
@@ -302,6 +330,7 @@ function initializeApp() {
     }
     pendingFinish = false;
     lastEscape = null;
+    guard.restoreCommitted();
     state = 'finished';
     renderState();
     persist();

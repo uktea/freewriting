@@ -20,18 +20,20 @@
     <section class="writing" aria-label="フリーライティング">
       <div class="timer-area">
         <div class="timer" id="timer">
-          <div id="time-setting" class="time-setting">
-            <label class="minute-entry" title="クリックして入力、上下にドラッグして変更">
-              <input id="minutes" type="text" inputmode="numeric" pattern="[0-9]*" value="3" maxlength="3" role="spinbutton" aria-valuemin="1" aria-valuemax="180" aria-valuenow="3" aria-label="ライティング時間（分）" autocomplete="off">
-              <span class="unit">分</span>
-            </label>
-            <div class="stepper">
-              <button id="increase" class="icon-button" aria-label="1分増やす" type="button"><img src="./icons/keyboard_arrow_up.svg" alt="" width="20" height="20"></button>
-              <button id="decrease" class="icon-button" aria-label="1分減らす" type="button"><img src="./icons/keyboard_arrow_down.svg" alt="" width="20" height="20"></button>
+          <div class="timer-display">
+            <div id="time-setting" class="time-setting">
+              <label class="minute-entry" title="クリックして入力、上下にドラッグして変更">
+                <input id="minutes" type="text" inputmode="numeric" pattern="[0-9]*" value="3" maxlength="3" role="spinbutton" aria-valuemin="1" aria-valuemax="180" aria-valuenow="3" aria-label="ライティング時間（分）" autocomplete="off">
+                <span class="unit">分</span>
+              </label>
+              <div class="stepper">
+                <button id="increase" class="icon-button" aria-label="1分増やす" type="button"><img src="./icons/keyboard_arrow_up.svg" alt="" width="20" height="20"></button>
+                <button id="decrease" class="icon-button" aria-label="1分減らす" type="button"><img src="./icons/keyboard_arrow_down.svg" alt="" width="20" height="20"></button>
+              </div>
             </div>
-          </div>
-          <div id="time-remaining" class="time-remaining" role="timer" aria-label="残り時間" hidden>
-            <span id="remaining-minutes">03</span><span class="colon">:</span><span id="remaining-seconds">00</span>
+            <div id="time-remaining" class="time-remaining" role="timer" aria-label="残り時間" aria-hidden="true" inert>
+              <span id="remaining-minutes">03</span><span class="colon">:</span><span id="remaining-seconds">00</span>
+            </div>
           </div>
           <svg class="timer-line" viewBox="0 0 180 2" preserveAspectRatio="none" aria-hidden="true">
             <rect width="180" height="2" fill="#e9e9e9"></rect>

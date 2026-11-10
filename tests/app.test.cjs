@@ -314,6 +314,40 @@ test('timer reaches zero, progress recedes left, and text remains readable', () 
   assert.equal(a.elements.editor.value, '残る文章');
   assert.equal(a.elements['progress-line'].attributes.width, '0');
 });
+test('progress decreases between whole-second digit updates and resets to full', () => {
+  const a = app();
+  a.elements.minutes.value = '1'; send(a.elements.minutes, 'change');
+  a.elements.start.click();
+  a.advance(5000);
+  assert.equal(a.elements['progress-line'].attributes.width, '180');
+  nativeInsert(a.elements.editor, '本文');
+  a.advance(250);
+  assert.equal(a.elements['remaining-minutes'].textContent, '01');
+  assert.equal(a.elements['remaining-seconds'].textContent, '00');
+  assert.equal(Number(a.elements['progress-line'].attributes.width), 179.25);
+  a.advance(250);
+  assert.equal(a.elements['remaining-seconds'].textContent, '00');
+  assert.equal(Number(a.elements['progress-line'].attributes.width), 178.5);
+  a.advance(59500);
+  assert.equal(a.state(), 'finished');
+  assert.equal(a.elements['progress-line'].attributes.width, '0');
+  a.elements.restart.click();
+  assert.equal(a.elements['progress-line'].attributes.width, '180');
+});
+test('only the active timer layer participates in focus and accessibility', () => {
+  const a = app();
+  assert.equal(a.elements['time-setting'].inert, false);
+  assert.equal(a.elements['time-remaining'].inert, true);
+  a.elements.start.click();
+  assert.equal(a.elements['time-setting'].inert, true);
+  assert.equal(a.elements['time-setting'].attributes['aria-hidden'], 'true');
+  assert.equal(a.elements['time-remaining'].attributes['aria-hidden'], 'false');
+  send(a.document, 'keydown', { key: 'Escape' });
+  assert.equal(a.state(), 'ready');
+  assert.equal(a.elements['time-setting'].inert, false);
+  assert.equal(a.elements['time-setting'].attributes['aria-hidden'], 'false');
+  assert.equal(a.elements['time-remaining'].inert, true);
+});
 test('deadline during Japanese composition waits for commit without dropping characters', () => {
   const a = app();
   a.elements.minutes.value = '1'; send(a.elements.minutes, 'change');

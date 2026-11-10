@@ -250,8 +250,12 @@ function initializeApp() {
     $('stop').hidden = !waiting && !writing;
     $('stop').setAttribute('aria-label', waiting ? '開始をキャンセル' : '執筆を中止して文章を残す');
     $('stop').setAttribute('title', waiting ? 'キャンセル（Esc）' : '中止して文章を残す（Escを2回）');
-    $('time-setting').hidden = !ready;
-    $('time-remaining').hidden = ready;
+    // Keep both layers rendered for the timer-only CSS transition, while the
+    // inactive layer is excluded from focus, interaction, and accessibility.
+    $('time-setting').inert = !ready;
+    $('time-setting').setAttribute('aria-hidden', String(!ready));
+    $('time-remaining').inert = ready;
+    $('time-remaining').setAttribute('aria-hidden', String(ready));
     $('result-actions').hidden = !finished;
     $('copy').disabled = !editor.value;
     $('save-open').disabled = !editor.value;
@@ -279,8 +283,13 @@ function initializeApp() {
     $('remaining-minutes').textContent = mm;
     $('remaining-seconds').textContent = ss;
     $('time-remaining').setAttribute('aria-label', `残り${Math.floor(seconds / 60)}分${seconds % 60}秒`);
-    // The left edge is fixed; the right edge recedes to the left.
-    $('progress-line').setAttribute('width', String(180 * seconds / totalSeconds));
+  }
+
+  function renderProgress(milliseconds) {
+    // Independent of the whole-second digits: the existing 100ms timer feeds
+    // short linear CSS transitions, always recomputed from the real deadline.
+    const ratio = Math.max(0, Math.min(1, milliseconds / (totalSeconds * 1000)));
+    $('progress-line').setAttribute('width', String(180 * ratio));
   }
 
   function prepareWriting() {
@@ -293,6 +302,7 @@ function initializeApp() {
     state = 'waiting';
     lastRenderedSecond = -1;
     renderTime(totalSeconds);
+    renderProgress(totalSeconds * 1000);
     renderState();
     editor.focus({ preventScroll: true });
   }
@@ -313,8 +323,10 @@ function initializeApp() {
   function tick() {
     const now = Date.now();
     if (state === 'writing') {
-      const seconds = Math.max(0, Math.ceil((deadline - now) / 1000));
+      const milliseconds = Math.max(0, deadline - now);
+      const seconds = Math.ceil(milliseconds / 1000);
       renderTime(seconds);
+      renderProgress(milliseconds);
       if (seconds === 0) finish('時間になりました。');
     }
   }
@@ -342,7 +354,7 @@ function initializeApp() {
     if (state !== 'waiting') return;
     state = 'ready';
     renderState();
-    $('progress-line').setAttribute('width', '180');
+    renderProgress(totalSeconds * 1000);
     $('start').focus({ preventScroll: true });
   }
 
@@ -404,7 +416,7 @@ function initializeApp() {
     lastEscape = null;
     pendingFinish = false;
     state = 'ready';
-    $('progress-line').setAttribute('width', '180');
+    renderProgress(totalSeconds * 1000);
     renderState();
     persist();
     announce('時間を設定して開始できます。');
@@ -495,7 +507,10 @@ function initializeApp() {
   totalSeconds = duration * 60;
   renderState();
   if (state === 'ready') updateDuration(duration);
-  else renderTime(0);
+  else {
+    renderTime(0);
+    renderProgress(0);
+  }
 }
 
 if (typeof document !== 'undefined') initializeApp();

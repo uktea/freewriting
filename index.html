@@ -22,13 +22,15 @@
         <div class="timer" id="timer">
           <div class="timer-display">
             <div id="time-setting" class="time-setting">
-              <label class="minute-entry" title="クリックして入力、上下にドラッグして変更">
-                <input id="minutes" type="text" inputmode="numeric" pattern="[0-9]*" value="3" maxlength="3" role="spinbutton" aria-valuemin="1" aria-valuemax="180" aria-valuenow="3" aria-label="ライティング時間（分）" autocomplete="off">
-                <span class="unit">分</span>
-              </label>
-              <div class="stepper">
-                <button id="increase" class="icon-button" aria-label="1分増やす" type="button"><img src="./icons/keyboard_arrow_up.svg" alt="" width="20" height="20"></button>
-                <button id="decrease" class="icon-button" aria-label="1分減らす" type="button"><img src="./icons/keyboard_arrow_down.svg" alt="" width="20" height="20"></button>
+              <div class="minute-controls">
+                <label class="minute-entry" title="クリックして入力、上下ドラッグ／ホイールで変更">
+                  <input id="minutes" type="text" inputmode="numeric" pattern="[0-9]*" value="3" maxlength="3" role="spinbutton" aria-valuemin="1" aria-valuemax="180" aria-valuenow="3" aria-label="ライティング時間（分）" autocomplete="off">
+                  <span class="unit">分</span>
+                </label>
+                <div class="stepper">
+                  <button id="increase" class="icon-button" aria-label="1分増やす" type="button"><img src="./icons/keyboard_arrow_up.svg" alt="" width="20" height="20"></button>
+                  <button id="decrease" class="icon-button" aria-label="1分減らす" type="button"><img src="./icons/keyboard_arrow_down.svg" alt="" width="20" height="20"></button>
+                </div>
               </div>
             </div>
             <div id="time-remaining" class="time-remaining" role="timer" aria-label="残り時間" aria-hidden="true" inert>
@@ -40,6 +42,9 @@
             <rect id="progress-line" width="180" height="2" fill="#555555"></rect>
           </svg>
         </div>
+        <label id="timer-option" class="timer-option" title="執筆中のタイマーと下線バーを表示">
+          <input id="show-timer" type="checkbox" checked>タイマー表示
+        </label>
       </div>
 
       <div class="paper-top">

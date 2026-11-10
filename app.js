@@ -6,6 +6,14 @@ const clampMinutes = (value) => Math.max(1, Math.min(180,
 const isInsertionAt = (before, after, position) => after.length >= before.length
   && after.startsWith(before.slice(0, position))
   && after.endsWith(before.slice(position));
+const isDeletionOnly = (before, after) => {
+  const previous = Array.from(before.normalize('NFC'));
+  const next = Array.from(after.normalize('NFC'));
+  if (next.length >= previous.length) return false;
+  let index = 0;
+  for (const character of previous) if (character === next[index]) index++;
+  return index === next.length;
+};
 
 class WritingGuard {
   constructor(editor, { active, onCommit, onCompositionEnd }) {
@@ -17,15 +25,28 @@ class WritingGuard {
     this.reconverting = false;
     this.accepted = editor.value;
     this.position = editor.selectionEnd;
+    this.resetCompositionTracking();
     editor.addEventListener('keydown', (event) => this.keydown(event));
+    editor.addEventListener('keyup', () => { this.deleteRequested = false; });
+    editor.addEventListener('pointerdown', () => {
+      if (!this.composing) {
+        this.trailingCommit = null;
+        this.recoveredComposition = false;
+      }
+    });
     editor.addEventListener('beforeinput', (event) => this.beforeinput(event));
     editor.addEventListener('input', (event) => this.input(event));
     editor.addEventListener('compositionstart', () => this.compositionstart());
+    editor.addEventListener('compositionupdate', (event) => {
+      if (this.active() && this.composing) this.recordComposition(event.data || '');
+    });
     editor.addEventListener('compositionend', (event) => this.compositionend(event));
     editor.addEventListener('cut', (event) => {
       if (this.active()) event.preventDefault();
     });
     editor.addEventListener('paste', () => {
+      this.trailingCommit = null;
+      this.recoveredComposition = false;
       if (this.active() && !this.composing) this.collapseSelection();
     });
     // Dragging selected text can delete its original location without a keypress.
@@ -42,6 +63,72 @@ class WritingGuard {
     this.position = this.editor.selectionEnd;
     this.composing = false;
     this.reconverting = false;
+    this.resetCompositionTracking();
+  }
+
+  resetCompositionTracking() {
+    this.compositionText = '';
+    this.compositionValue = this.accepted;
+    this.deleteRequested = false;
+    this.conversionRequested = false;
+    this.conversionInProgress = false;
+    this.recovery = null;
+    this.recoveredComposition = false;
+    this.trailingCommit = null;
+  }
+
+  recordComposition(text) {
+    if (this.reconverting) return;
+    if (this.recovery) return;
+    const previous = this.compositionText;
+    // Some IMEs temporarily clear their buffer while committing a candidate.
+    if (!text && previous && this.conversionInProgress && !this.deleteRequested) return;
+    const deleted = this.deleteRequested && text !== previous && !text.startsWith(previous);
+    if (deleted || (!this.conversionRequested && isDeletionOnly(previous, text))) {
+      this.recovery = {
+        value: this.compositionValue,
+        position: this.compositionPosition + previous.length,
+        text: previous,
+        rejected: text,
+      };
+      return;
+    }
+    this.compositionText = text;
+    this.compositionValue = this.compositionBase.slice(0, this.compositionPosition)
+      + text + this.compositionBase.slice(this.compositionPosition);
+    this.conversionRequested = false;
+    this.deleteRequested = false;
+  }
+
+  compositionFromDOM() {
+    if (!isInsertionAt(this.compositionBase, this.editor.value, this.compositionPosition)) return null;
+    const suffixLength = this.compositionBase.length - this.compositionPosition;
+    return this.editor.value.slice(this.compositionPosition, this.editor.value.length - suffixLength);
+  }
+
+  commitRecovery() {
+    const saved = this.recovery;
+    if (!saved) return;
+    this.recovery = null;
+    this.composing = false;
+    this.reconverting = false;
+    this.recoveredComposition = true;
+    this.trailingCommit = { text: saved.text, rejected: saved.rejected, repair: true };
+    this.editor.value = saved.value;
+    this.editor.setSelectionRange(saved.position, saved.position);
+    this.accepted = saved.value;
+    this.position = saved.position;
+    this.onCommit();
+    this.onCompositionEnd();
+  }
+
+  recoverComposition() {
+    // Microsoft IME can apply a non-cancelable deletion before JavaScript can
+    // stop it. End that composition and commit the protected pre-deletion text;
+    // changing a live IME buffer in place would desynchronize its reading.
+    this.editor.blur();
+    if (this.recovery) this.commitRecovery();
+    if (this.active() && !this.editor.readOnly) this.editor.focus({ preventScroll: true });
   }
 
   collapseSelection() {
@@ -61,11 +148,20 @@ class WritingGuard {
 
   keydown(event) {
     if (!this.active()) return;
+    this.trailingCommit = null;
+    this.recoveredComposition = false;
     // IMEs often report key="Process" / keyCode=229 but retain the physical
     // code. Block explicit deletion without canceling candidate replacement.
-    if (['Backspace', 'Delete'].includes(event.key) || ['Backspace', 'Delete'].includes(event.code)
+    const deleting = ['Backspace', 'Delete'].includes(event.key) || ['Backspace', 'Delete'].includes(event.code)
       || [8, 46].includes(event.keyCode)
-      || ((event.ctrlKey || event.metaKey) && ['x', 'z', 'y'].includes((event.key || '').toLowerCase()))) {
+      || ((event.ctrlKey || event.metaKey) && ['x', 'z', 'y'].includes((event.key || '').toLowerCase()));
+    if (this.composing) {
+      this.deleteRequested = deleting;
+      const conversionKeys = [' ', 'Space', 'Convert', 'NonConvert', 'Enter', 'ArrowUp', 'ArrowDown', 'F6', 'F7', 'F8', 'F9', 'F10'];
+      this.conversionRequested = !deleting && (conversionKeys.includes(event.key) || conversionKeys.includes(event.code));
+      this.conversionInProgress = this.conversionRequested;
+    }
+    if (deleting) {
       event.preventDefault();
     }
     if (!this.composing && (event.key === 'Convert' || event.code === 'Convert')) event.preventDefault();
@@ -77,11 +173,22 @@ class WritingGuard {
     // deleteCompositionText is an IME operation used to replace a candidate.
     if ((event.inputType.startsWith('delete') && event.inputType !== 'deleteCompositionText')
       || event.inputType.startsWith('history')) {
+      if (this.composing) this.deleteRequested = true;
       event.preventDefault();
+      if (this.recovery) this.recoverComposition();
       return;
     }
     // Leave native candidate replacement and phonetic-to-kanji conversion alone.
-    if (this.composing || event.isComposing
+    if (this.composing) {
+      if (['insertCompositionText', 'insertFromComposition'].includes(event.inputType)
+        && typeof event.data === 'string') this.recordComposition(event.data);
+      if (this.recovery) {
+        event.preventDefault();
+        this.recoverComposition();
+      }
+      return;
+    }
+    if (event.isComposing
       || ['insertCompositionText', 'deleteCompositionText', 'insertFromComposition'].includes(event.inputType)) return;
     this.restoreCommitted();
     if (event.inputType === 'insertReplacementText') {
@@ -92,7 +199,40 @@ class WritingGuard {
   }
 
   input(event) {
-    if (!this.active() || this.composing || event.isComposing) return;
+    const tail = this.trailingCommit;
+    if (!this.composing && this.recoveredComposition && event.isComposing) {
+      this.restoreCommitted();
+      this.trailingCommit = null;
+      this.onCommit();
+      return;
+    }
+    if (!this.composing && tail && (event.isComposing
+      || ['insertFromComposition', 'deleteCompositionText', 'insertCompositionText'].includes(event.inputType)
+      || (tail.repair && typeof event.data === 'string' && [tail.text, tail.rejected].includes(event.data)))) {
+      this.restoreCommitted();
+      this.trailingCommit = null;
+      this.onCommit();
+      return;
+    }
+    if (!this.active()) return;
+    if (!this.composing && event.isComposing) {
+      // Handle an IME update whose compositionstart was omitted or delayed.
+      this.resetCompositionTracking();
+      this.compositionBase = this.accepted;
+      this.compositionPosition = this.position;
+      this.composing = true;
+    }
+    if (this.composing) {
+      const candidate = this.compositionFromDOM();
+      if (candidate !== null) {
+        if (event.inputType !== 'deleteCompositionText' || this.deleteRequested) this.recordComposition(candidate);
+      } else if (!this.reconverting) {
+        this.recovery = { value: this.compositionValue, position: this.compositionPosition + this.compositionText.length,
+          text: this.compositionText, rejected: event.data };
+      }
+      if (this.recovery) this.recoverComposition();
+      return;
+    }
     if (!isInsertionAt(this.accepted, this.editor.value, this.position)) {
       // Covers non-cancelable beforeinput, OS undo, and browser replacement.
       this.editor.value = this.accepted;
@@ -105,28 +245,52 @@ class WritingGuard {
 
   compositionstart() {
     if (!this.active() || this.composing) return;
+    if (this.recoveredComposition) {
+      this.restoreCommitted();
+      return;
+    }
     this.reconverting = this.editor.selectionStart !== this.editor.selectionEnd;
     this.restoreCommitted();
     this.collapseSelection();
+    this.resetCompositionTracking();
     this.compositionBase = this.accepted;
     this.compositionPosition = this.editor.selectionEnd;
     this.composing = true;
   }
 
   compositionend(event) {
+    if (this.recovery) {
+      this.commitRecovery();
+      return;
+    }
+    if (this.recoveredComposition && !this.composing) {
+      this.restoreCommitted();
+      return;
+    }
     if (!this.composing && !this.active()) return;
     const hadComposition = this.composing;
     const base = this.composing ? this.compositionBase : this.accepted;
     const position = this.composing ? this.compositionPosition : this.position;
+    if (hadComposition && !this.reconverting) {
+      const candidate = typeof event.data === 'string' && event.data.length
+        ? event.data : this.compositionFromDOM();
+      this.recordComposition(candidate === null ? this.compositionText : candidate);
+      if (this.recovery) {
+        this.commitRecovery();
+        return;
+      }
+      const value = base.slice(0, position) + this.compositionText + base.slice(position);
+      const repair = this.editor.value !== value;
+      if (repair) {
+        this.editor.value = value;
+        this.editor.setSelectionRange(position + this.compositionText.length, position + this.compositionText.length);
+      }
+      this.trailingCommit = { text: this.compositionText, repair };
+    }
     this.composing = false;
     if (this.reconverting || (!hadComposition && !isInsertionAt(base, this.editor.value, position))) {
       this.editor.value = base;
       this.editor.setSelectionRange(position, position);
-    } else if (!isInsertionAt(base, this.editor.value, position)) {
-      // A selection or IME reconversion must never replace committed text.
-      const inserted = event.data || '';
-      this.editor.value = base.slice(0, position) + inserted + base.slice(position);
-      this.editor.setSelectionRange(position + inserted.length, position + inserted.length);
     }
     this.reconverting = false;
     this.accepted = this.editor.value;

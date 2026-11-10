@@ -31,10 +31,6 @@
                   <button id="increase" class="icon-button" aria-label="1分増やす" type="button"><img src="./icons/keyboard_arrow_up.svg" alt="" width="20" height="20"></button>
                   <button id="decrease" class="icon-button" aria-label="1分減らす" type="button"><img src="./icons/keyboard_arrow_down.svg" alt="" width="20" height="20"></button>
                 </div>
-                <label id="timer-option" class="timer-option" title="執筆中のタイマーを非表示" aria-label="執筆中のタイマーを非表示">
-                  <input id="hide-timer" type="checkbox" aria-label="執筆中のタイマーを非表示">
-                  <img id="timer-visibility-icon" src="./icons/visibility.svg" alt="" width="18" height="18">
-                </label>
               </div>
             </div>
             <div id="time-remaining" class="time-remaining" role="timer" aria-label="残り時間" aria-hidden="true" inert>
@@ -49,6 +45,10 @@
       </div>
 
       <div class="paper-top">
+        <label id="timer-option" class="timer-option" title="執筆中のタイマーを非表示" aria-label="執筆中のタイマーを非表示">
+          <input id="hide-timer" type="checkbox" aria-label="執筆中のタイマーを非表示">
+          <img id="timer-visibility-icon" src="./icons/visibility.svg" alt="" width="18" height="18">
+        </label>
         <button id="stop" class="icon-button" type="button" aria-label="執筆を中止して文章を残す" title="中止して文章を残す（Escを2回）" hidden><img src="./icons/close.svg" alt="" width="20" height="20"></button>
       </div>
       <div class="paper" id="paper">

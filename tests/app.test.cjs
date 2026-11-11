@@ -292,13 +292,20 @@ test('IME deletion updates do not notify a composition end until the native end 
   assert.equal(guard.composing, false);
 });
 
-function app(saved) {
+function app(saved, options = {}) {
   const html = readFileSync(require.resolve('../index.html'), 'utf8');
   const elements = Object.fromEntries([...html.matchAll(/id="([^"]+)"/g)].map((m) => [m[1], new Element()]));
   elements.minutes.value = '3';
   elements['hide-timer'].checked = false;
   const document = new EventTarget();
   document.body = new Element();
+  document.activeElement = document.body;
+  for (const element of Object.values(elements)) {
+    element.focus = () => { document.activeElement = element; };
+    element.blur = () => {
+      if (document.activeElement === element) document.activeElement = document.body;
+    };
+  }
   document.getElementById = (id) => elements[id];
   let clock = 100000;
   const intervals = new Map();
@@ -306,16 +313,28 @@ function app(saved) {
   const window = new EventTarget();
   const storage = new Map();
   if (saved) storage.set('freewriting-session-v1', JSON.stringify(saved));
+  const copies = [];
+  const commands = [];
+  const navigator = options.clipboard === false ? {} : {
+    clipboard: { writeText: (text) => {
+      copies.push(text);
+      return options.writeText ? options.writeText(text) : Promise.resolve();
+    } },
+  };
+  document.execCommand = (command) => {
+    commands.push(command);
+    return options.legacyCopy === true;
+  };
   const context = {
-    document, window, console, Blob, URL, navigator: {},
+    document, window, console, Blob, URL, navigator,
     Date: class extends Date { static now() { return clock; } },
     setInterval: (fn) => { intervals.set(++intervalId, fn); return intervalId; },
-    clearInterval: (id) => intervals.delete(id), setTimeout: () => {},
+    clearInterval: (id) => intervals.delete(id), setTimeout: () => {}, clearTimeout: () => {},
     localStorage: { getItem: (k) => storage.get(k) || null, setItem: (k, v) => storage.set(k, v) },
   };
   vm.runInNewContext(readFileSync(require.resolve('../app.js'), 'utf8'), context);
   return {
-    elements, document, window, storage,
+    elements, document, window, storage, copies, commands,
     advance: (ms) => { clock += ms; for (const fn of [...intervals.values()]) fn(); },
     state: () => document.body.dataset.state,
   };
@@ -439,6 +458,7 @@ test('deadline during Japanese composition waits for commit without dropping cha
   a.advance(60000);
   assert.equal(a.state(), 'writing');
   assert.equal(a.elements.editor.readOnly, false);
+  assert.deepEqual(a.copies, []);
   send(a.document, 'keydown', { key: 'Escape', isComposing: true });
   assert.equal(a.state(), 'writing');
   a.elements.editor.value = '本文日本語';
@@ -448,6 +468,7 @@ test('deadline during Japanese composition waits for commit without dropping cha
   assert.equal(a.elements.editor.value, '本文日本語');
   const saved = JSON.parse(a.storage.get('freewriting-session-v1'));
   assert.equal(saved.text, '本文日本語');
+  assert.deepEqual(a.copies, ['本文日本語']);
 });
 test('two quick Escape presses stop writing and preserve the text', () => {
   const a = app();
@@ -536,21 +557,131 @@ test('IME cancellation presses are excluded from double Escape', () => {
   assert.equal(a.state(), 'finished');
   assert.equal(a.elements.editor.value, '本文日本語');
 });
-test('Space, Enter, and Escape reset finished sessions without restarting', () => {
+test('Space, Enter, and Escape leave finished sessions and saved text intact', () => {
   for (const key of [' ', 'Enter', 'Escape']) {
     const a = app({ text: '終了した文章', minutes: 8, date: '2026-11-09T12:00:00Z' });
     assert.equal(a.state(), 'finished');
     const event = send(a.document, 'keydown', { key });
-    assert.equal(event.defaultPrevented, true);
+    assert.equal(event.defaultPrevented, false);
     a.elements.editor.dispatchEvent(event);
-    assert.equal(a.state(), 'ready');
-    assert.equal(a.elements.editor.value, '');
-    assert.equal(a.elements.editor.hidden, true);
+    assert.equal(a.state(), 'finished');
+    assert.equal(a.elements.editor.value, '終了した文章');
+    assert.equal(a.elements.editor.hidden, false);
     assert.equal(a.elements.minutes.value, '8');
-    assert.equal(JSON.parse(a.storage.get('freewriting-session-v1')).text, '');
+    assert.equal(JSON.parse(a.storage.get('freewriting-session-v1')).text, '終了した文章');
     send(a.document, 'keydown', { key, repeat: true });
-    assert.equal(a.state(), 'ready');
+    assert.equal(a.state(), 'finished');
   }
+});
+test('timer completion copies once and keeps accidental keys away from the reset button', async () => {
+  const a = app();
+  a.elements.minutes.value = '1'; send(a.elements.minutes, 'change');
+  a.elements.start.click(); nativeInsert(a.elements.editor, '完成した文章\n日本語も、そのまま。');
+  a.advance(60000);
+  assert.equal(a.state(), 'finished');
+  assert.equal(a.document.activeElement, a.elements.editor);
+  assert.equal(a.elements.editor.readOnly, true);
+  const text = a.elements.editor.value;
+  assert.deepEqual(a.copies, [text]);
+  for (const key of [' ', 'Enter', 'Escape', 'Enter', ' ']) {
+    const target = a.document.activeElement;
+    const event = send(a.document, 'keydown', { key, target });
+    // Include native button activation: removing only the global shortcut
+    // would still erase text if finish() left focus on the reset button.
+    if (!event.defaultPrevented && [' ', 'Enter'].includes(key) && target === a.elements.restart) target.click();
+    assert.equal(a.state(), 'finished');
+    assert.equal(a.elements.editor.value, text);
+  }
+  a.advance(5000);
+  await new Promise(setImmediate);
+  assert.deepEqual(a.copies, [text]);
+  assert.equal(a.elements.copy.hidden, false);
+  assert.equal(a.elements.copy.disabled, false);
+  assert.equal(a.elements['save-open'].disabled, false);
+  assert.equal(a.elements.copy.icon.src, './icons/check.svg');
+  assert.equal(JSON.parse(a.storage.get('freewriting-session-v1')).text, text);
+  a.elements.restart.click();
+  assert.equal(a.state(), 'ready');
+  assert.equal(a.elements.editor.value, '');
+});
+test('manual stop copies the preserved text only once', async () => {
+  const a = app();
+  a.elements.start.click(); nativeInsert(a.elements.editor, '途中で終えても残す文章');
+  a.elements.stop.click();
+  assert.equal(a.state(), 'finished');
+  for (let i = 0; i < 5; i++) send(a.document, 'keydown', { key: 'Escape' });
+  a.advance(300000);
+  await new Promise(setImmediate);
+  assert.deepEqual(a.copies, ['途中で終えても残す文章']);
+  assert.equal(a.elements.editor.value, '途中で終えても残す文章');
+});
+test('denied automatic copy preserves text and focus, and the copy button can retry', async () => {
+  let reject;
+  let attempts = 0;
+  const a = app(undefined, { writeText: () => {
+    attempts++;
+    return attempts === 1 ? new Promise((_, fail) => { reject = fail; }) : Promise.resolve();
+  } });
+  a.elements.start.click(); nativeInsert(a.elements.editor, 'コピーが拒否されても残す');
+  a.elements.stop.click();
+  a.elements['save-open'].click();
+  assert.equal(a.document.activeElement, a.elements.filename);
+  reject(new Error('NotAllowedError'));
+  await new Promise(setImmediate);
+  assert.equal(a.state(), 'finished');
+  assert.equal(a.elements.editor.value, 'コピーが拒否されても残す');
+  assert.equal(a.document.activeElement, a.elements.filename);
+  assert.deepEqual(a.commands, []);
+  assert.equal(a.elements.copy.disabled, false);
+  assert.match(a.elements.copy.attributes.title, /自動コピーできませんでした/);
+  a.elements['save-dialog'].close();
+  a.elements.copy.click();
+  await new Promise(setImmediate);
+  assert.deepEqual(a.copies, ['コピーが拒否されても残す', 'コピーが拒否されても残す']);
+  assert.equal(a.elements.copy.icon.src, './icons/check.svg');
+});
+test('automatic copy never overwrites the clipboard on reload or for empty text', async () => {
+  const restored = app({ text: '前回の文章', minutes: 3, date: '2026-11-09T12:00:00Z' });
+  assert.equal(restored.state(), 'finished');
+  await new Promise(setImmediate);
+  assert.deepEqual(restored.copies, []);
+  for (const text of ['', ' \n\t']) {
+    const empty = app();
+    empty.elements.minutes.value = '1'; send(empty.elements.minutes, 'change');
+    empty.elements.start.click(); send(empty.elements.editor, 'keydown', { key: 'Enter' });
+    if (text) nativeInsert(empty.elements.editor, text);
+    empty.advance(60000);
+    assert.equal(empty.state(), 'finished');
+    await new Promise(setImmediate);
+    assert.deepEqual(empty.copies, []);
+  }
+});
+test('manual copy retains its legacy fallback when Clipboard API is unavailable', async () => {
+  const a = app(undefined, { clipboard: false, legacyCopy: true });
+  a.elements.start.click(); nativeInsert(a.elements.editor, '手動コピーの文章');
+  a.elements.stop.click();
+  await new Promise(setImmediate);
+  assert.deepEqual(a.commands, []);
+  a.elements.copy.click();
+  await new Promise(setImmediate);
+  assert.deepEqual(a.commands, ['copy']);
+  assert.equal(a.elements.copy.icon.src, './icons/check.svg');
+  assert.equal(a.elements.editor.value, '手動コピーの文章');
+});
+test('a delayed clipboard result cannot change a new writing session', async () => {
+  let resolve;
+  const a = app(undefined, { writeText: () => new Promise((done) => { resolve = done; }) });
+  a.elements.start.click(); nativeInsert(a.elements.editor, '最初の文章');
+  a.elements.stop.click();
+  assert.deepEqual(a.copies, ['最初の文章']);
+  a.elements.restart.click();
+  a.elements.start.click(); nativeInsert(a.elements.editor, '新しい文章');
+  resolve();
+  await new Promise(setImmediate);
+  assert.equal(a.state(), 'writing');
+  assert.equal(a.elements.editor.value, '新しい文章');
+  assert.equal(a.elements.copy.icon.src, './icons/content_copy.svg');
+  assert.equal(JSON.parse(a.storage.get('freewriting-session-v1')).text, '新しい文章');
 });
 test('shortcuts leave filename editing and IME confirmation untouched', () => {
   const a = app({ text: '保存する文章', minutes: 3, date: '2026-11-09T12:00:00Z' });

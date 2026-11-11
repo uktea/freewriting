@@ -152,13 +152,15 @@ function initializeApp() {
   let lastTimeMasked = null;
   let sessionDate = new Date();
   let storageAvailable = true;
+  let copyOperation = 0;
+  let copyFeedbackTimer;
   let lastEscape = null;
   const doubleEscapeMs = 400;
 
   // Start before WritingGuard handles the same event. In particular, an IME's
   // first compositionstart must reach the guard with writing already active.
   function handleShortcut(event) {
-    if (event.defaultPrevented) return;
+    if (event.defaultPrevented || state === 'finished') return;
     // Leave candidate selection, IME cancellation, and filename editing native.
     if (event.isComposing || event.keyCode === 229 || guard.composing || $('save-dialog').open) {
       lastEscape = null;
@@ -177,11 +179,6 @@ function initializeApp() {
     // A focused checkbox keeps its native Space-to-toggle operation.
     if (state === 'ready' && event.target === hideTimer && event.key === ' ') return;
     if (!escape) lastEscape = null;
-    if (state === 'finished' && (activate || escape)) {
-      event.preventDefault();
-      resetSession();
-      return;
-    }
     if (state === 'ready' && activate) {
       event.preventDefault();
       prepareWriting();
@@ -312,6 +309,7 @@ function initializeApp() {
 
   function prepareWriting() {
     if (state !== 'ready') return;
+    resetCopyFeedback();
     updateDuration(minutes.value);
     editor.value = '';
     guard.reset();
@@ -350,6 +348,7 @@ function initializeApp() {
   }
 
   function finish(reason) {
+    if (state !== 'writing') return;
     clearInterval(interval);
     if (guard.composing) {
       // Let the current conversion commit before setting readonly. Locking the
@@ -365,7 +364,10 @@ function initializeApp() {
     renderState();
     persist();
     announce(reason);
-    $('restart').focus({ preventScroll: true });
+    // Keep subsequent Enter/Space presses on the readonly text, away from the
+    // destructive reset button's native keyboard activation.
+    editor.focus({ preventScroll: true });
+    if (editor.value.trim()) void copyText(true);
   }
 
   function cancelWaiting() {
@@ -456,6 +458,7 @@ function initializeApp() {
 
   function resetSession() {
     clearInterval(interval);
+    resetCopyFeedback();
     editor.value = '';
     guard.reset();
     lastEscape = null;
@@ -470,29 +473,58 @@ function initializeApp() {
   $('restart').addEventListener('click', resetSession);
   window.addEventListener('blur', () => { lastEscape = null; });
 
-  $('copy').addEventListener('click', async () => {
+  function resetCopyFeedback() {
+    copyOperation++;
+    clearTimeout(copyFeedbackTimer);
+    const button = $('copy');
+    button.querySelector('img').src = './icons/content_copy.svg';
+    button.setAttribute('aria-label', '文章をコピー');
+    button.setAttribute('title', 'コピー');
+  }
+
+  async function copyText(automatic = false) {
+    const text = editor.value;
+    if (state !== 'finished' || !text) return false;
+    resetCopyFeedback();
+    const operation = copyOperation;
     const button = $('copy');
     const icon = button.querySelector('img');
+    const current = () => operation === copyOperation && state === 'finished' && editor.value === text;
     try {
-      await navigator.clipboard.writeText(editor.value);
+      await navigator.clipboard.writeText(text);
     } catch {
+      if (!current()) return false;
+      // Timer completion may lack the activation required by the browser.
+      // Never steal focus or change selection in an automatic fallback.
+      if (automatic) {
+        button.setAttribute('title', '自動コピーできませんでした。クリックしてコピー');
+        announce('自動コピーできませんでした。コピーボタンでコピーできます。');
+        return false;
+      }
+      if ($('save-dialog').open) return false;
       editor.focus();
       editor.select();
       let copied = false;
       try { copied = document.execCommand('copy'); } catch { /* File export remains available. */ }
       if (!copied) {
         announce('コピーできませんでした。選択中の文章を手動でコピーしてください。');
-        return;
+        return false;
       }
     }
+    if (!current()) return true;
     icon.src = './icons/check.svg';
     button.setAttribute('aria-label', 'コピーしました');
-    announce('コピーしました。');
-    setTimeout(() => {
+    button.setAttribute('title', 'コピーしました');
+    announce(automatic ? '文章を自動コピーしました。' : 'コピーしました。');
+    copyFeedbackTimer = setTimeout(() => {
+      if (!current()) return;
       icon.src = './icons/content_copy.svg';
       button.setAttribute('aria-label', '文章をコピー');
+      button.setAttribute('title', 'コピー');
     }, 1800);
-  });
+    return true;
+  }
+  $('copy').addEventListener('click', () => { void copyText(); });
 
   function defaultFilename() {
     const pad = (n) => String(n).padStart(2, '0');

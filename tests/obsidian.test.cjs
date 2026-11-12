@@ -1,7 +1,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { buildObsidianUri, validateObsidianSettings, obsidianFilename } = require('../obsidian.js');
+const { readFileSync } = require('node:fs');
+const { buildObsidianUri, validateObsidianSettings, obsidianFilename } = new Function(
+  readFileSync(require.resolve('../app.js'), 'utf8')
+    + '\nreturn { buildObsidianUri, validateObsidianSettings, obsidianFilename };',
+)();
 
 test('URI values round-trip Japanese, spaces, emoji, newlines and reserved characters', () => {
   const params = { vault: '私の Vault & #+%', file: '日記/メモ.md', content: '日本語😀\n&file=evil? #+% /\\' };

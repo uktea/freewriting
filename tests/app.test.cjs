@@ -3,7 +3,11 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const vm = require('node:vm');
-const { WritingGuard, clampMinutes } = require('../app.js');
+// Keep CommonJS test exports out of the browser entry point: HTML bundlers
+// otherwise wrap the script as a separate CommonJS module.
+const { WritingGuard, clampMinutes } = new Function(
+  readFileSync(require.resolve('../app.js'), 'utf8') + '\nreturn { WritingGuard, clampMinutes };',
+)();
 
 class Element extends EventTarget {
   constructor(value = '') {
@@ -339,7 +343,6 @@ function app(saved, options = {}) {
       storage.set(k, v);
     } },
   };
-  vm.runInNewContext(readFileSync(require.resolve('../obsidian.js'), 'utf8'), context);
   vm.runInNewContext(readFileSync(require.resolve('../app.js'), 'utf8'), context);
   return {
     elements, document, window, storage, copies, commands, launches,

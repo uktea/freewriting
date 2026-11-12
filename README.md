@@ -33,6 +33,8 @@ Obsidianのインストールと、保存先VaultをObsidianで一度開いて�
 node --test
 ```
 
+ブラウザー側のJavaScriptは `app.js` の1エントリーで完結します。BunのHTMLバンドルでもファイル間の暗黙のグローバル共有に依存しない構成です。ブラウザーのエントリーにはCommonJSの `module.exports` を置かず、テスト側で検証する関数を読み込みます。Bunを使う場合は `bun build ./index.html --outdir ./dist` で生成したページについても起動・設定・保存操作を確認してください。
+
 実機での確認項目:
 
 1. HTTPSのサイトで執筆を終え、初回設定のVault名・任意フォルダーを指定して保存する。

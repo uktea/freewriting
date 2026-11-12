@@ -311,8 +311,11 @@ function app(saved, options = {}) {
   const intervals = new Map();
   let intervalId = 0;
   const window = new EventTarget();
+  const launches = [];
+  window.location = { set href(value) { launches.push(value); } };
   const storage = new Map();
   if (saved) storage.set('freewriting-session-v1', JSON.stringify(saved));
+  if (options.obsidian) storage.set('freewriting-obsidian-v1', JSON.stringify(options.obsidian));
   const copies = [];
   const commands = [];
   const navigator = options.clipboard === false ? {} : {
@@ -327,14 +330,19 @@ function app(saved, options = {}) {
   };
   const context = {
     document, window, console, Blob, URL, navigator,
+    crypto: require('node:crypto').webcrypto, Uint8Array,
     Date: class extends Date { static now() { return clock; } },
     setInterval: (fn) => { intervals.set(++intervalId, fn); return intervalId; },
     clearInterval: (id) => intervals.delete(id), setTimeout: () => {}, clearTimeout: () => {},
-    localStorage: { getItem: (k) => storage.get(k) || null, setItem: (k, v) => storage.set(k, v) },
+    localStorage: { getItem: (k) => storage.get(k) || null, setItem: (k, v) => {
+      if (options.storageDenied) throw new Error('Storage denied');
+      storage.set(k, v);
+    } },
   };
+  vm.runInNewContext(readFileSync(require.resolve('../obsidian.js'), 'utf8'), context);
   vm.runInNewContext(readFileSync(require.resolve('../app.js'), 'utf8'), context);
   return {
-    elements, document, window, storage, copies, commands,
+    elements, document, window, storage, copies, commands, launches,
     advance: (ms) => { clock += ms; for (const fn of [...intervals.values()]) fn(); },
     state: () => document.body.dataset.state,
   };
@@ -821,4 +829,169 @@ test('restored visibility preference applies after reloading and Space can toggl
   a.elements.start.click();
   assert.equal(a.elements.timer.attributes['data-masked'], 'false');
   assert.equal(a.elements['time-remaining'].attributes['aria-hidden'], 'false');
+});
+
+const obsidianSession = (text = '本文 & # ? + % 😀\n次の行') => ({ text, date: '2026-11-12T00:08:07.006Z' });
+const obsidianSettings = { vault: '私の Vault & #+%', folder: '日記/FreeWriting' };
+
+test('first Obsidian save requests settings, then launches with encoded content and remembers them', () => {
+  const a = app(obsidianSession());
+  a.elements['obsidian-save'].click();
+  assert.equal(a.launches.length, 0);
+  assert.equal(a.elements['obsidian-dialog'].open, true);
+  a.elements['obsidian-vault'].value = obsidianSettings.vault;
+  a.elements['obsidian-folder'].value = obsidianSettings.folder;
+  send(a.elements['obsidian-form'], 'submit');
+  assert.equal(a.elements['obsidian-dialog'].open, false);
+  assert.equal(a.launches.length, 1);
+  const uri = new URL(a.launches[0]);
+  assert.equal(uri.protocol, 'obsidian:');
+  assert.equal(uri.hostname, 'new');
+  assert.equal(uri.searchParams.get('vault'), obsidianSettings.vault);
+  assert.equal(uri.searchParams.get('content'), obsidianSession().text);
+  assert.match(uri.searchParams.get('file'), /^日記\/FreeWriting\/FreeWriting-.*-[a-f0-9]{32}\.md$/);
+  assert.equal(uri.searchParams.has('overwrite'), false);
+  assert.equal(uri.searchParams.has('append'), false);
+  assert.deepEqual(JSON.parse(a.storage.get('freewriting-obsidian-v1')), obsidianSettings);
+  assert.match(a.elements['obsidian-message'].textContent, /完了はObsidian側で確認/);
+  assert.equal(a.elements['obsidian-download'].hidden, false);
+  assert.equal(a.elements.editor.value, obsidianSession().text);
+  a.elements['obsidian-save'].click();
+  assert.equal(a.launches.length, 1, 'ignore double-click');
+});
+
+test('stored settings enable one-click save without changing the clipboard', () => {
+  const a = app(obsidianSession(), { obsidian: obsidianSettings });
+  a.elements['obsidian-save'].click();
+  assert.equal(a.launches.length, 1);
+  assert.equal(a.copies.length, 0);
+  assert.equal(a.elements['obsidian-dialog'].open, undefined);
+  const retry = a.elements['obsidian-retry'].href;
+  a.elements['obsidian-retry'].click();
+  assert.equal(a.elements['obsidian-retry'].href, retry, 'retry keeps the same target');
+  const b = app(obsidianSession(), { obsidian: obsidianSettings });
+  b.elements['obsidian-save'].click();
+  assert.notEqual(new URL(b.launches[0]).searchParams.get('file'), new URL(a.launches[0]).searchParams.get('file'));
+});
+
+test('launch test opens the entered Vault without creating a note or saving settings', () => {
+  const a = app(obsidianSession());
+  a.elements['obsidian-settings'].click();
+  a.elements['obsidian-vault'].value = obsidianSettings.vault;
+  a.elements['obsidian-test'].click();
+  const uri = new URL(a.launches[0]);
+  assert.equal(uri.hostname, 'open');
+  assert.equal(uri.searchParams.get('vault'), obsidianSettings.vault);
+  assert.equal(uri.searchParams.has('content'), false);
+  assert.equal(a.storage.has('freewriting-obsidian-v1'), false);
+  assert.equal(a.elements['obsidian-dialog'].open, true);
+});
+
+test('invalid remembered settings and unsafe edited folders do not launch', () => {
+  const a = app(obsidianSession(), { obsidian: { vault: '', folder: '../bad' } });
+  a.elements['obsidian-save'].click();
+  a.elements['obsidian-vault'].value = 'Vault';
+  a.elements['obsidian-folder'].value = '../bad';
+  send(a.elements['obsidian-form'], 'submit');
+  assert.equal(a.launches.length, 0);
+  assert.equal(a.elements['obsidian-dialog'].open, true);
+  assert.match(a.elements['obsidian-settings-message'].textContent, /相対パス/);
+});
+
+test('storage denial still allows saving but explicitly warns settings will not persist', () => {
+  const a = app(obsidianSession(), { storageDenied: true });
+  a.elements['obsidian-save'].click();
+  a.elements['obsidian-vault'].value = 'Vault';
+  send(a.elements['obsidian-form'], 'submit');
+  assert.equal(a.launches.length, 1);
+  assert.match(a.elements['obsidian-message'].textContent, /次回は再設定/);
+  assert.equal(a.elements.editor.value, obsidianSession().text);
+});
+
+test('long Japanese text requires successful clipboard copy and a separate launch click', async () => {
+  const text = '長文😀 & #\n'.repeat(1000);
+  const a = app(obsidianSession(text), { obsidian: obsidianSettings });
+  a.elements['obsidian-save'].click();
+  assert.equal(a.launches.length, 0);
+  assert.equal(a.copies.length, 0);
+  assert.equal(a.elements['obsidian-long-dialog'].open, true);
+  assert.equal(a.elements['obsidian-open-long'].hidden, true);
+  a.elements['obsidian-copy-long'].click();
+  await new Promise(setImmediate);
+  assert.deepEqual(a.copies, [text]);
+  assert.equal(a.launches.length, 0, 'awaiting clipboard must not launch');
+  assert.equal(a.elements['obsidian-open-long'].hidden, false);
+  const uri = new URL(a.elements['obsidian-open-long'].href);
+  assert.equal(uri.searchParams.get('clipboard'), 'true');
+  assert.equal(uri.searchParams.has('content'), false);
+  assert.ok(uri.href.length <= 1800);
+  a.elements['obsidian-open-long'].click();
+  assert.equal(a.elements['obsidian-long-dialog'].open, false);
+  a.elements['obsidian-retry'].click();
+  assert.equal(a.elements['obsidian-long-dialog'].open, true);
+  assert.equal(a.elements['obsidian-open-long'].hidden, true, 'retry must recopy current text');
+});
+
+test('denied or missing clipboard never exposes a launch link for long text', async () => {
+  for (const options of [{ clipboard: false }, { writeText: () => Promise.reject(new Error('Denied')) }]) {
+    const a = app(obsidianSession('長'.repeat(1000)), { obsidian: obsidianSettings, ...options });
+    a.elements['obsidian-save'].click();
+    a.elements['obsidian-copy-long'].click();
+    await new Promise(setImmediate);
+    assert.equal(a.launches.length, 0);
+    assert.equal(a.elements['obsidian-open-long'].hidden, true);
+    assert.equal(a.elements['obsidian-copy-long'].disabled, false);
+    assert.match(a.elements['obsidian-long-message'].textContent, /Markdown/);
+  }
+});
+
+test('delayed long copy cannot arm a launch link after the session is reset', async () => {
+  let resolveCopy;
+  const a = app(obsidianSession('長'.repeat(1000)), {
+    obsidian: obsidianSettings, writeText: () => new Promise((resolve) => { resolveCopy = resolve; }),
+  });
+  a.elements['obsidian-save'].click();
+  a.elements['obsidian-copy-long'].click();
+  a.elements.restart.click();
+  resolveCopy();
+  await new Promise(setImmediate);
+  assert.equal(a.launches.length, 0);
+  assert.equal(a.elements['obsidian-long-dialog'].open, false);
+  assert.equal(a.elements['obsidian-open-long'].hidden, true);
+  assert.equal(a.elements['obsidian-feedback'].hidden, true);
+});
+
+test('an oversized destination and malformed UTF-16 cannot crash or launch a truncated note', () => {
+  const a = app(obsidianSession(), { obsidian: { vault: 'あ'.repeat(200), folder: 'い'.repeat(200) } });
+  a.elements['obsidian-save'].click();
+  assert.equal(a.launches.length, 0);
+  assert.match(a.elements['obsidian-message'].textContent, /名前が長い/);
+  assert.equal(a.elements['obsidian-download'].hidden, false);
+  const b = app(obsidianSession('\ud800'), { obsidian: obsidianSettings });
+  b.elements['obsidian-save'].click();
+  assert.equal(b.launches.length, 0);
+  assert.equal(b.elements['obsidian-long-dialog'].open, true);
+});
+
+test('empty and active sessions cannot be exported to Obsidian', () => {
+  for (const saved of [undefined, obsidianSession('')]) {
+    const a = app(saved, { obsidian: obsidianSettings });
+    assert.equal(a.elements['obsidian-save'].disabled, true);
+    a.elements['obsidian-save'].click();
+    assert.equal(a.launches.length, 0);
+  }
+});
+
+test('encoded URI budget includes all parameters and switches exactly above 1800 characters', () => {
+  const options = { obsidian: { vault: 'V', folder: '' } };
+  const baseline = app(obsidianSession('x'), options);
+  baseline.elements['obsidian-save'].click();
+  const overhead = baseline.launches[0].length - 1;
+  const fits = app(obsidianSession('x'.repeat(1800 - overhead)), options);
+  fits.elements['obsidian-save'].click();
+  assert.equal(fits.launches[0].length, 1800);
+  const tooLong = app(obsidianSession('x'.repeat(1801 - overhead)), options);
+  tooLong.elements['obsidian-save'].click();
+  assert.equal(tooLong.launches.length, 0);
+  assert.equal(tooLong.elements['obsidian-long-dialog'].open, true);
 });

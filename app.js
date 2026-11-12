@@ -225,6 +225,10 @@ function initializeApp() {
 
   function announce(message) { $('status').textContent = message; }
 
+  const obsidian = initializeObsidianExport({
+    getSession: () => state === 'finished' ? { text: editor.value, date: sessionDate } : null,
+  });
+
   function persist() {
     try {
       localStorage.setItem(storageKey, JSON.stringify({
@@ -266,6 +270,7 @@ function initializeApp() {
     $('result-actions').hidden = !finished;
     $('copy').disabled = !editor.value;
     $('save-open').disabled = !editor.value;
+    obsidian.refresh();
     document.title = writing ? 'FreeWriting — 執筆中' : 'FreeWriting';
     if (!ready && lastRenderedSecond >= 0) renderTime(lastRenderedSecond);
   }

@@ -9,6 +9,7 @@
   <link rel="icon" href="./icons/edit_note.svg" type="image/svg+xml">
   <link rel="preload" href="./fonts/BIZUDGothic-Regular.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="./layout.css">
+  <script src="./obsidian.js" defer></script>
   <script src="./app.js" defer></script>
 </head>
 <body data-state="ready">
@@ -61,9 +62,16 @@
       <div id="result-actions" class="result-actions" hidden>
         <button id="restart" class="icon-button" type="button" aria-label="もう一度書く" title="もう一度書く"><img src="./icons/replay.svg" width="20" height="20" alt=""></button>
         <div class="export-actions">
+          <button id="obsidian-save" class="icon-button text-button" type="button" aria-label="Obsidianに保存" title="Obsidianに保存">Obsidian</button>
+          <button id="obsidian-settings" class="icon-button text-button" type="button" aria-label="Obsidianの設定" title="Obsidianの設定">設定</button>
           <button id="copy" class="icon-button" type="button" aria-label="文章をコピー" title="コピー"><img src="./icons/content_copy.svg" width="19" height="19" alt=""></button>
           <button id="save-open" class="icon-button" type="button" aria-label="文章を保存" title="保存"><img src="./icons/download.svg" width="20" height="20" alt=""></button>
         </div>
+      </div>
+      <div id="obsidian-feedback" class="export-feedback" hidden>
+        <p id="obsidian-message" role="status" aria-live="polite"></p>
+        <a id="obsidian-retry">もう一度Obsidianを開く</a>
+        <button id="obsidian-download" class="icon-button text-button" type="button">Markdownをダウンロード</button>
       </div>
       <p id="status" class="sr-only" role="status" aria-live="polite"></p>
     </section>
@@ -77,6 +85,35 @@
       <input id="filename" name="filename" type="text" maxlength="120" required autocomplete="off">
       <button class="plain-button" type="submit"><img src="./icons/download.svg" width="20" height="20" alt="">ダウンロード</button>
     </form>
+  </dialog>
+  <dialog id="obsidian-dialog" aria-labelledby="obsidian-title" aria-describedby="obsidian-help">
+    <form method="dialog"><button class="icon-button dialog-close" aria-label="閉じる"><img src="./icons/close.svg" width="22" height="22" alt=""></button></form>
+    <h2 id="obsidian-title">Obsidianの設定</h2>
+    <p id="obsidian-help" class="dialog-help">Obsidianをインストールし、保存先のVaultを一度開いてください。ブラウザーの起動確認が出たら、Obsidianを開くことを許可してください。</p>
+    <form id="obsidian-form" class="settings-form">
+      <label for="obsidian-vault">Vault名（またはVault ID）</label>
+      <input id="obsidian-vault" type="text" required maxlength="200" autocomplete="off" aria-describedby="obsidian-vault-help">
+      <p id="obsidian-vault-help" class="dialog-help">Obsidianに表示されるVault名を正確に入力します。</p>
+      <label for="obsidian-folder">保存先フォルダー（任意・Vault内）</label>
+      <input id="obsidian-folder" type="text" maxlength="200" placeholder="例: FreeWriting" autocomplete="off">
+      <p class="dialog-help">空欄ならVaultの直下に保存します。日時とランダムID付きのMarkdown名を使います。設定はこのブラウザーに記憶します。</p>
+      <p id="obsidian-settings-message" class="dialog-help" role="status" aria-live="polite"></p>
+      <div class="dialog-actions">
+        <button id="obsidian-test" class="plain-button" type="button">起動テスト</button>
+        <button id="obsidian-settings-submit" class="plain-button" type="submit">設定を保存</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="obsidian-long-dialog" aria-labelledby="obsidian-long-title" aria-describedby="obsidian-long-help">
+    <form method="dialog"><button class="icon-button dialog-close" aria-label="閉じる"><img src="./icons/close.svg" width="22" height="22" alt=""></button></form>
+    <h2 id="obsidian-long-title">長文をObsidianへ渡す</h2>
+    <p id="obsidian-long-help" class="dialog-help">長文は起動用リンクに収まらない場合があります。本文をコピーし、続けてObsidianを開いてください。クリップボードの内容は置き換わります。開くまでは別の内容をコピーしないでください。</p>
+    <div class="dialog-actions">
+      <button id="obsidian-copy-long" class="plain-button" type="button">1. 本文をコピー</button>
+      <a id="obsidian-open-long" class="plain-button" hidden>2. Obsidianを開く</a>
+    </div>
+    <p id="obsidian-long-message" class="dialog-help" role="status" aria-live="polite"></p>
+    <button id="obsidian-download-long" class="icon-button text-button" type="button">Markdownをダウンロード</button>
   </dialog>
   <noscript><p>このアプリのタイマーと執筆機能にはJavaScriptが必要です。</p></noscript>
 </body>

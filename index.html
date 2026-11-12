@@ -61,16 +61,18 @@
       <div id="result-actions" class="result-actions" hidden>
         <button id="restart" class="icon-button" type="button" aria-label="もう一度書く" title="もう一度書く"><img src="./icons/replay.svg" width="20" height="20" alt=""></button>
         <div class="export-actions">
-          <button id="obsidian-save" class="icon-button text-button" type="button" aria-label="Obsidianに保存" title="Obsidianに保存">Obsidian</button>
-          <button id="obsidian-settings" class="icon-button text-button" type="button" aria-label="Obsidianの設定" title="Obsidianの設定">設定</button>
+          <button id="obsidian-save" class="icon-button" type="button" aria-label="Obsidianに保存" title="Obsidianに保存"><img src="./icons/obsidian.svg" width="20" height="20" alt=""></button>
+          <button id="obsidian-settings" class="icon-button" type="button" aria-label="Obsidianの設定" title="Obsidianの設定"><img src="./icons/settings.svg" width="20" height="20" alt=""></button>
           <button id="copy" class="icon-button" type="button" aria-label="文章をコピー" title="コピー"><img src="./icons/content_copy.svg" width="19" height="19" alt=""></button>
           <button id="save-open" class="icon-button" type="button" aria-label="文章を保存" title="保存"><img src="./icons/download.svg" width="20" height="20" alt=""></button>
         </div>
       </div>
       <div id="obsidian-feedback" class="export-feedback" hidden>
         <p id="obsidian-message" role="status" aria-live="polite"></p>
-        <a id="obsidian-retry">もう一度Obsidianを開く</a>
-        <button id="obsidian-download" class="icon-button text-button" type="button">Markdownをダウンロード</button>
+        <div class="feedback-actions">
+          <a id="obsidian-retry" class="icon-button" aria-label="もう一度Obsidianを開く" title="もう一度Obsidianを開く"><img src="./icons/replay.svg" width="20" height="20" alt=""></a>
+          <button id="obsidian-download" class="icon-button" type="button" aria-label="Markdownをダウンロード" title="Markdownをダウンロード"><img src="./icons/download.svg" width="20" height="20" alt=""></button>
+        </div>
       </div>
       <p id="status" class="sr-only" role="status" aria-live="polite"></p>
     </section>
@@ -88,14 +90,14 @@
   <dialog id="obsidian-dialog" aria-labelledby="obsidian-title" aria-describedby="obsidian-help">
     <form method="dialog"><button class="icon-button dialog-close" aria-label="閉じる"><img src="./icons/close.svg" width="22" height="22" alt=""></button></form>
     <h2 id="obsidian-title">Obsidianの設定</h2>
-    <p id="obsidian-help" class="dialog-help">Obsidianをインストールし、保存先のVaultを一度開いてください。ブラウザーの起動確認が出たら、Obsidianを開くことを許可してください。</p>
+    <p id="obsidian-help" class="dialog-help">Obsidianをインストールし、保存先のVaultを一度開いてください。</p>
     <form id="obsidian-form" class="settings-form">
       <label for="obsidian-vault">Vault名（またはVault ID）</label>
       <input id="obsidian-vault" type="text" required maxlength="200" autocomplete="off" aria-describedby="obsidian-vault-help">
-      <p id="obsidian-vault-help" class="dialog-help">Obsidianに表示されるVault名を正確に入力します。</p>
+      <p id="obsidian-vault-help" class="dialog-help">Obsidianに表示される名前を入力します。</p>
       <label for="obsidian-folder">保存先フォルダー（任意・Vault内）</label>
       <input id="obsidian-folder" type="text" maxlength="200" placeholder="例: FreeWriting" autocomplete="off">
-      <p class="dialog-help">空欄ならVaultの直下に保存します。日時とランダムID付きのMarkdown名を使います。設定はこのブラウザーに記憶します。</p>
+      <p class="dialog-help">空欄はVault直下。設定はこのブラウザーに保存します。</p>
       <p id="obsidian-settings-message" class="dialog-help" role="status" aria-live="polite"></p>
       <div class="dialog-actions">
         <button id="obsidian-test" class="plain-button" type="button">起動テスト</button>
@@ -106,7 +108,7 @@
   <dialog id="obsidian-long-dialog" aria-labelledby="obsidian-long-title" aria-describedby="obsidian-long-help">
     <form method="dialog"><button class="icon-button dialog-close" aria-label="閉じる"><img src="./icons/close.svg" width="22" height="22" alt=""></button></form>
     <h2 id="obsidian-long-title">長文をObsidianへ渡す</h2>
-    <p id="obsidian-long-help" class="dialog-help">長文は起動用リンクに収まらない場合があります。本文をコピーし、続けてObsidianを開いてください。クリップボードの内容は置き換わります。開くまでは別の内容をコピーしないでください。</p>
+    <p id="obsidian-long-help" class="dialog-help">本文をコピーしてからObsidianを開きます。クリップボードを置き換えるため、保存するまでは別の内容をコピーしないでください。</p>
     <div class="dialog-actions">
       <button id="obsidian-copy-long" class="plain-button" type="button">1. 本文をコピー</button>
       <a id="obsidian-open-long" class="plain-button" hidden>2. Obsidianを開く</a>

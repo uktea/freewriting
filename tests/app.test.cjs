@@ -334,7 +334,6 @@ function app(saved, options = {}) {
   };
   const context = {
     document, window, console, Blob, URL, navigator,
-    crypto: require('node:crypto').webcrypto, Uint8Array,
     Date: class extends Date { static now() { return clock; } },
     setInterval: (fn) => { intervals.set(++intervalId, fn); return intervalId; },
     clearInterval: (id) => intervals.delete(id), setTimeout: () => {}, clearTimeout: () => {},
@@ -852,11 +851,11 @@ test('first Obsidian save requests settings, then launches with encoded content 
   assert.equal(uri.hostname, 'new');
   assert.equal(uri.searchParams.get('vault'), obsidianSettings.vault);
   assert.equal(uri.searchParams.get('content'), obsidianSession().text);
-  assert.match(uri.searchParams.get('file'), /^日記\/FreeWriting\/FreeWriting-.*-[a-f0-9]{32}\.md$/);
+  assert.equal(uri.searchParams.get('file'), '日記/FreeWriting/FreeWriting-2026-11-12.md');
   assert.equal(uri.searchParams.has('overwrite'), false);
   assert.equal(uri.searchParams.has('append'), false);
   assert.deepEqual(JSON.parse(a.storage.get('freewriting-obsidian-v1')), obsidianSettings);
-  assert.match(a.elements['obsidian-message'].textContent, /完了はObsidian側で確認/);
+  assert.equal(a.elements['obsidian-message'].textContent, 'Obsidianで保存を確認してください。');
   assert.equal(a.elements['obsidian-download'].hidden, false);
   assert.equal(a.elements.editor.value, obsidianSession().text);
   a.elements['obsidian-save'].click();
@@ -874,7 +873,12 @@ test('stored settings enable one-click save without changing the clipboard', () 
   assert.equal(a.elements['obsidian-retry'].href, retry, 'retry keeps the same target');
   const b = app(obsidianSession(), { obsidian: obsidianSettings });
   b.elements['obsidian-save'].click();
-  assert.notEqual(new URL(b.launches[0]).searchParams.get('file'), new URL(a.launches[0]).searchParams.get('file'));
+  assert.equal(new URL(b.launches[0]).searchParams.get('file'), new URL(a.launches[0]).searchParams.get('file'));
+  for (const launch of [a.launches[0], b.launches[0]]) {
+    const params = new URL(launch).searchParams;
+    assert.equal(params.has('overwrite'), false, 'same-day saves must not request replacement');
+    assert.equal(params.has('append'), false, 'each save remains a separate note request');
+  }
 });
 
 test('launch test opens the entered Vault without creating a note or saving settings', () => {

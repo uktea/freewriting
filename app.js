@@ -164,10 +164,9 @@ function buildObsidianUri(action, params) {
     .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join('&')}`;
 }
 
-function obsidianFilename(date, id) {
-  const pad = (n, length = 2) => String(n).padStart(length, '0');
-  return `FreeWriting-${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-    + `_${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}-${pad(date.getMilliseconds(), 3)}-${id}.md`;
+function obsidianFilename(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `FreeWriting-${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}.md`;
 }
 
 function initializeObsidianExport({ getSession }) {
@@ -213,7 +212,7 @@ function initializeObsidianExport({ getSession }) {
   }
 
   function requested() {
-    showFeedback(`Obsidianに起動を依頼しました。起動・保存の完了はObsidian側で確認してください。\n保存先: ${settings.vault} / ${pending.file}\n開かない場合は設定の起動テストかMarkdownのダウンロードをお試しください。`, pending.uri);
+    showFeedback('Obsidianで保存を確認してください。', pending.uri);
     // Ignore accidental double-clicks. A later save creates a separate note.
     button.disabled = true;
     clearTimeout(cooldown);
@@ -227,10 +226,9 @@ function initializeObsidianExport({ getSession }) {
     const session = getSession();
     if (!session?.text || button.disabled) return;
     if (!settings) { openSettings(true); return; }
-    const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (n) => n.toString(16).padStart(2, '0')).join('');
-    const filename = obsidianFilename(session.date, id);
+    const filename = obsidianFilename(session.date);
     const file = settings.folder ? `${settings.folder}/${filename}` : filename;
-    // Do not append or overwrite. The browser cannot inspect existing Vault files.
+    // Let Obsidian resolve existing names; never request append or overwrite.
     pending = { text: session.text, filename, file, uri: null };
     let uri;
     try { uri = buildObsidianUri('new', { vault: settings.vault, file, content: session.text }); } catch {
@@ -251,7 +249,7 @@ function initializeObsidianExport({ getSession }) {
     $('obsidian-open-long').hidden = true;
     $('obsidian-copy-long').disabled = false;
     $('obsidian-long-message').textContent = '';
-    showFeedback('長文の受け渡しを準備しています。本文はこの画面に残っています。', null);
+    showFeedback('本文をコピーしてObsidianへ渡します。', null);
     longDialog.showModal();
   }
 
@@ -278,7 +276,7 @@ function initializeObsidianExport({ getSession }) {
   $('obsidian-test').addEventListener('click', () => {
     const value = readSettings();
     if (!value) return;
-    $('obsidian-settings-message').textContent = '起動を依頼しました。指定したVaultが開くことをObsidian側で確認してください。開かない場合はインストール状況とVault名を確認してください。';
+    $('obsidian-settings-message').textContent = 'ObsidianでVaultが開くか確認してください。';
     window.location.href = buildObsidianUri('open', { vault: value.vault });
   });
 
@@ -293,7 +291,7 @@ function initializeObsidianExport({ getSession }) {
       request.uri = buildObsidianUri('new', { vault: settings.vault, file: request.file, clipboard: 'true' });
       $('obsidian-open-long').href = request.uri;
       $('obsidian-open-long').hidden = false;
-      $('obsidian-long-message').textContent = 'コピーしました。「2. Obsidianを開く」を押してください。保存されるまでは別の内容をコピーしないでください。';
+      $('obsidian-long-message').textContent = 'コピーしました。次にObsidianを開いてください。';
       // A fresh, explicit click avoids async clipboard permission prompts
       // consuming the activation needed for a custom protocol launch.
       $('obsidian-open-long').focus();

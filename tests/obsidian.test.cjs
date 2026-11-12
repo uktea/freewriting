@@ -29,7 +29,9 @@ test('settings allow Vault IDs and relative folders but reject unsafe paths', ()
   }
 });
 
-test('generated filenames include local session time and a collision-resistant ID', () => {
+test('filenames use only the local session date, without time or random IDs', () => {
   const date = new Date(2026, 10, 12, 9, 8, 7, 6);
-  assert.equal(obsidianFilename(date, 'abc123'), 'FreeWriting-2026-11-12_09-08-07-006-abc123.md');
+  assert.equal(obsidianFilename(date), 'FreeWriting-2026-11-12.md');
+  assert.equal(obsidianFilename(new Date(2026, 10, 12, 23, 59)), obsidianFilename(date));
+  assert.equal(obsidianFilename(new Date(2026, 0, 2)), 'FreeWriting-2026-01-02.md');
 });

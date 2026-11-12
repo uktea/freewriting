@@ -66,7 +66,7 @@ dialog h2 { font-size: 19px; font-weight: 500; margin: 24px 0; }
 .text-button { font-size: 12px; }
 .export-feedback { margin: 14px 0; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
 .export-feedback p { margin: 0 0 8px; white-space: pre-line; }
-.export-feedback a { margin-right: 12px; }
+.feedback-actions { display: flex; gap: 12px; }
 .dialog-help { font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
 .settings-form label { display: block; font-size: 12px; margin: 18px 0 8px; }
 .settings-form input { width: 100%; padding: 10px; border: 1px solid #ccc; font-size: 14px; }

@@ -135,6 +135,221 @@ class WritingGuard {
   }
 }
 
+// Keep export initialization in this entry point: HTML bundlers isolate scripts.
+// A conservative routing budget, not a universal browser/OS URI limit.
+const OBSIDIAN_URI_BUDGET = 1800;
+const OBSIDIAN_SETTINGS_KEY = 'freewriting-obsidian-v1';
+
+function validateObsidianSettings(value) {
+  const vault = typeof value?.vault === 'string' ? value.vault.trim() : '';
+  const rawFolder = typeof value?.folder === 'string' ? value.folder.trim() : '';
+  const folder = rawFolder.replace(/\/+$/, '');
+  if (!vault || vault.length > 200 || /[\u0000-\u001f\u007f]/.test(vault)) {
+    throw new Error('Vault名を1〜200文字で入力してください。');
+  }
+  if (rawFolder.startsWith('/') || folder.length > 200 || (folder && folder.split('/').some((part) =>
+    !part || part === '.' || part === '..' || /[<>:"\\|?*#^\[\]\u0000-\u001f\u007f]/.test(part)
+    || /[. ]$/.test(part) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part)))) {
+    throw new Error('フォルダーはVault内の相対パスで入力してください（例: FreeWriting/日記）。使用できない名前・記号や「..」は使えません。');
+  }
+  // Invalid UTF-16 must not prevent the rest of the writing app from loading.
+  try { encodeURIComponent(vault); encodeURIComponent(folder); } catch {
+    throw new Error('設定に使用できない文字が含まれています。入力し直してください。');
+  }
+  return { vault, folder };
+}
+
+function buildObsidianUri(action, params) {
+  return `obsidian://${action}?${Object.entries(params)
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join('&')}`;
+}
+
+function obsidianFilename(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `FreeWriting-${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}.md`;
+}
+
+function initializeObsidianExport({ getSession }) {
+  const $ = (id) => document.getElementById(id);
+  const button = $('obsidian-save');
+  const dialog = $('obsidian-dialog');
+  const longDialog = $('obsidian-long-dialog');
+  let settings = null;
+  let saveAfterSettings = false;
+  let pending = null;
+  let cooldown;
+  let requestedFeedback = false;
+  try {
+    settings = validateObsidianSettings(JSON.parse(localStorage.getItem(OBSIDIAN_SETTINGS_KEY)));
+  } catch { /* Missing, corrupt, or unavailable storage falls back to setup. */ }
+
+  function readSettings() {
+    try {
+      const value = validateObsidianSettings({ vault: $('obsidian-vault').value, folder: $('obsidian-folder').value });
+      $('obsidian-settings-message').textContent = '';
+      return value;
+    } catch (error) {
+      $('obsidian-settings-message').textContent = error.message;
+      return null;
+    }
+  }
+
+  function openSettings(thenSave) {
+    saveAfterSettings = thenSave;
+    $('obsidian-vault').value = settings?.vault || '';
+    $('obsidian-folder').value = settings?.folder || '';
+    $('obsidian-settings-submit').textContent = thenSave ? '設定して保存' : '設定を保存';
+    $('obsidian-settings-message').textContent = '';
+    dialog.showModal();
+    $('obsidian-vault').focus();
+  }
+
+  function showFeedback(message) {
+    $('obsidian-feedback').hidden = false;
+    $('obsidian-message').textContent = message;
+  }
+
+  function setRequestedFeedback(active) {
+    requestedFeedback = active;
+    $('obsidian-logo').hidden = active;
+    $('obsidian-check').hidden = !active;
+    button.setAttribute('aria-label', active ? 'Obsidianに起動を依頼しました' : 'Obsidianに保存');
+    button.setAttribute('title', active ? '起動を依頼しました' : 'Obsidianに保存');
+  }
+
+  function requested() {
+    $('obsidian-feedback').hidden = true;
+    setRequestedFeedback(true);
+    $('status').textContent = 'Obsidianに起動を依頼しました。';
+    // Ignore accidental double-clicks. A later save creates a separate note.
+    button.disabled = true;
+    clearTimeout(cooldown);
+    const request = pending;
+    cooldown = setTimeout(() => {
+      if (pending !== request) return;
+      setRequestedFeedback(false);
+      button.disabled = !getSession()?.text;
+    }, 1200);
+  }
+
+  function save() {
+    const session = getSession();
+    if (!session?.text || button.disabled) return;
+    if (!settings) { openSettings(true); return; }
+    const filename = obsidianFilename(session.date);
+    const file = settings.folder ? `${settings.folder}/${filename}` : filename;
+    // Let Obsidian resolve existing names; never request append or overwrite.
+    pending = { text: session.text, filename, file, uri: null };
+    let uri;
+    try { uri = buildObsidianUri('new', { vault: settings.vault, file, content: session.text }); } catch {
+      // Clipboard/file fallback also handles an unpaired surrogate in the text.
+    }
+    if (uri && uri.length <= OBSIDIAN_URI_BUDGET) {
+      pending.uri = uri;
+      // Keep this synchronous with the click to preserve user activation.
+      window.location.href = uri;
+      requested();
+      return;
+    }
+    const clipboardUri = buildObsidianUri('new', { vault: settings.vault, file, clipboard: 'true' });
+    if (clipboardUri.length > OBSIDIAN_URI_BUDGET) {
+      showFeedback('保存先の名前が長すぎます。設定にVault IDか短いフォルダー名を使ってください。');
+      return;
+    }
+    $('obsidian-open-long').hidden = true;
+    $('obsidian-copy-long').disabled = false;
+    $('obsidian-long-message').textContent = '';
+    $('obsidian-feedback').hidden = true;
+    longDialog.showModal();
+  }
+
+  button.addEventListener('click', save);
+  $('obsidian-settings').addEventListener('click', () => openSettings(false));
+  $('obsidian-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const value = readSettings();
+    if (!value) return;
+    settings = value;
+    let remembered = true;
+    try { localStorage.setItem(OBSIDIAN_SETTINGS_KEY, JSON.stringify(settings)); } catch { remembered = false; }
+    dialog.close();
+    // Changing the target invalidates pending clipboard operations and feedback.
+    pending = null;
+    clearTimeout(cooldown);
+    setRequestedFeedback(false);
+    button.disabled = !getSession()?.text;
+    $('obsidian-feedback').hidden = true;
+    $('status').textContent = 'Obsidianの設定を保存しました。';
+    if (saveAfterSettings) {
+      save();
+    }
+    if (!remembered) showFeedback('設定を記憶できないため、次回は再設定してください。このページを閉じるまでは利用できます。');
+  });
+  $('obsidian-test').addEventListener('click', () => {
+    const value = readSettings();
+    if (!value) return;
+    $('obsidian-settings-message').textContent = 'ObsidianでVaultが開くか確認してください。';
+    window.location.href = buildObsidianUri('open', { vault: value.vault });
+  });
+
+  $('obsidian-copy-long').addEventListener('click', async () => {
+    const request = pending;
+    if (!request || $('obsidian-copy-long').disabled) return;
+    $('obsidian-copy-long').disabled = true;
+    $('obsidian-open-long').hidden = true;
+    try {
+      await navigator.clipboard.writeText(request.text);
+      if (pending !== request || !longDialog.open) return;
+      request.uri = buildObsidianUri('new', { vault: settings.vault, file: request.file, clipboard: 'true' });
+      $('obsidian-open-long').href = request.uri;
+      $('obsidian-open-long').hidden = false;
+      $('obsidian-long-message').textContent = 'コピーしました。次にObsidianを開いてください。';
+      // A fresh, explicit click avoids async clipboard permission prompts
+      // consuming the activation needed for a custom protocol launch.
+      $('obsidian-open-long').focus();
+    } catch {
+      if (pending !== request || !longDialog.open) return;
+      $('obsidian-long-message').textContent = 'コピーできませんでした。再試行するか、MarkdownをダウンロードしてVaultに入れてください。';
+    } finally {
+      if (pending === request) $('obsidian-copy-long').disabled = false;
+    }
+  });
+  $('obsidian-open-long').addEventListener('click', (event) => {
+    if (!pending?.uri || $('obsidian-open-long').hidden) { event.preventDefault(); return; }
+    requested();
+    longDialog.close();
+  });
+
+  function downloadMarkdown() {
+    if (!pending) return;
+    const url = URL.createObjectURL(new Blob([pending.text], { type: 'text/markdown;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = pending.filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+  $('obsidian-download-long').addEventListener('click', downloadMarkdown);
+
+  setRequestedFeedback(false);
+  return {
+    refresh() {
+      const session = getSession();
+      button.disabled = !session?.text || requestedFeedback;
+      if (!session) {
+        pending = null;
+        clearTimeout(cooldown);
+        setRequestedFeedback(false);
+        $('obsidian-feedback').hidden = true;
+        if (dialog.open) dialog.close();
+        if (longDialog.open) longDialog.close();
+      }
+    },
+  };
+}
+
 function initializeApp() {
   const $ = (id) => document.getElementById(id);
   const editor = $('editor');
@@ -225,6 +440,10 @@ function initializeApp() {
 
   function announce(message) { $('status').textContent = message; }
 
+  const obsidian = initializeObsidianExport({
+    getSession: () => state === 'finished' ? { text: editor.value, date: sessionDate } : null,
+  });
+
   function persist() {
     try {
       localStorage.setItem(storageKey, JSON.stringify({
@@ -266,6 +485,7 @@ function initializeApp() {
     $('result-actions').hidden = !finished;
     $('copy').disabled = !editor.value;
     $('save-open').disabled = !editor.value;
+    obsidian.refresh();
     document.title = writing ? 'FreeWriting — 執筆中' : 'FreeWriting';
     if (!ready && lastRenderedSecond >= 0) renderTime(lastRenderedSecond);
   }
@@ -593,4 +813,3 @@ function initializeApp() {
 }
 
 if (typeof document !== 'undefined') initializeApp();
-if (typeof module !== 'undefined') module.exports = { WritingGuard, clampMinutes, isInsertionAt };

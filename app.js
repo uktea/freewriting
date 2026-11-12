@@ -173,12 +173,12 @@ function initializeObsidianExport({ getSession }) {
   const $ = (id) => document.getElementById(id);
   const button = $('obsidian-save');
   const dialog = $('obsidian-dialog');
-  const longDialog = $('obsidian-long-dialog');
   let settings = null;
   let saveAfterSettings = false;
   let pending = null;
   let cooldown;
   let requestedFeedback = false;
+  let copying = false;
   try {
     settings = validateObsidianSettings(JSON.parse(localStorage.getItem(OBSIDIAN_SETTINGS_KEY)));
   } catch { /* Missing, corrupt, or unavailable storage falls back to setup. */ }
@@ -232,23 +232,32 @@ function initializeObsidianExport({ getSession }) {
     }, 1200);
   }
 
-  function save() {
+  function launch(uri) {
+    try {
+      window.location.href = uri;
+      requested();
+    } catch {
+      showFeedback('Obsidianを開けませんでした。インストール状況とブラウザーの起動許可を確認してください。');
+    }
+  }
+
+  async function save() {
     const session = getSession();
     if (!session?.text || button.disabled) return;
     if (!settings) { openSettings(true); return; }
     const filename = obsidianFilename(session.date);
     const file = settings.folder ? `${settings.folder}/${filename}` : filename;
     // Let Obsidian resolve existing names; never request append or overwrite.
-    pending = { text: session.text, filename, file, uri: null };
+    pending = { text: session.text };
+    const request = pending;
+    $('obsidian-feedback').hidden = true;
     let uri;
     try { uri = buildObsidianUri('new', { vault: settings.vault, file, content: session.text }); } catch {
       // Clipboard/file fallback also handles an unpaired surrogate in the text.
     }
     if (uri && uri.length <= OBSIDIAN_URI_BUDGET) {
-      pending.uri = uri;
       // Keep this synchronous with the click to preserve user activation.
-      window.location.href = uri;
-      requested();
+      launch(uri);
       return;
     }
     const clipboardUri = buildObsidianUri('new', { vault: settings.vault, file, clipboard: 'true' });
@@ -256,11 +265,23 @@ function initializeObsidianExport({ getSession }) {
       showFeedback('保存先の名前が長すぎます。設定にVault IDか短いフォルダー名を使ってください。');
       return;
     }
-    $('obsidian-open-long').hidden = true;
-    $('obsidian-copy-long').disabled = false;
-    $('obsidian-long-message').textContent = '';
-    $('obsidian-feedback').hidden = true;
-    longDialog.showModal();
+    // Long text uses the clipboard automatically in this same save operation.
+    // Launch only after copying succeeds, never with stale clipboard contents.
+    copying = true;
+    button.disabled = true;
+    try {
+      await navigator.clipboard.writeText(request.text);
+      if (pending !== request || getSession()?.text !== request.text) return;
+      launch(clipboardUri);
+    } catch {
+      if (pending !== request) return;
+      showFeedback('本文をコピーできませんでした。ブラウザーのコピー許可を確認して、もう一度保存してください。');
+    } finally {
+      if (pending === request) {
+        copying = false;
+        button.disabled = requestedFeedback || !getSession()?.text;
+      }
+    }
   }
 
   button.addEventListener('click', save);
@@ -275,6 +296,7 @@ function initializeObsidianExport({ getSession }) {
     dialog.close();
     // Changing the target invalidates pending clipboard operations and feedback.
     pending = null;
+    copying = false;
     clearTimeout(cooldown);
     setRequestedFeedback(false);
     button.disabled = !getSession()?.text;
@@ -292,59 +314,18 @@ function initializeObsidianExport({ getSession }) {
     window.location.href = buildObsidianUri('open', { vault: value.vault });
   });
 
-  $('obsidian-copy-long').addEventListener('click', async () => {
-    const request = pending;
-    if (!request || $('obsidian-copy-long').disabled) return;
-    $('obsidian-copy-long').disabled = true;
-    $('obsidian-open-long').hidden = true;
-    try {
-      await navigator.clipboard.writeText(request.text);
-      if (pending !== request || !longDialog.open) return;
-      request.uri = buildObsidianUri('new', { vault: settings.vault, file: request.file, clipboard: 'true' });
-      $('obsidian-open-long').href = request.uri;
-      $('obsidian-open-long').hidden = false;
-      $('obsidian-long-message').textContent = 'コピーしました。次にObsidianを開いてください。';
-      // A fresh, explicit click avoids async clipboard permission prompts
-      // consuming the activation needed for a custom protocol launch.
-      $('obsidian-open-long').focus();
-    } catch {
-      if (pending !== request || !longDialog.open) return;
-      $('obsidian-long-message').textContent = 'コピーできませんでした。再試行するか、MarkdownをダウンロードしてVaultに入れてください。';
-    } finally {
-      if (pending === request) $('obsidian-copy-long').disabled = false;
-    }
-  });
-  $('obsidian-open-long').addEventListener('click', (event) => {
-    if (!pending?.uri || $('obsidian-open-long').hidden) { event.preventDefault(); return; }
-    requested();
-    longDialog.close();
-  });
-
-  function downloadMarkdown() {
-    if (!pending) return;
-    const url = URL.createObjectURL(new Blob([pending.text], { type: 'text/markdown;charset=utf-8' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = pending.filename;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
-  }
-  $('obsidian-download-long').addEventListener('click', downloadMarkdown);
-
   setRequestedFeedback(false);
   return {
     refresh() {
       const session = getSession();
-      button.disabled = !session?.text || requestedFeedback;
+      button.disabled = !session?.text || requestedFeedback || copying;
       if (!session) {
         pending = null;
+        copying = false;
         clearTimeout(cooldown);
         setRequestedFeedback(false);
         $('obsidian-feedback').hidden = true;
         if (dialog.open) dialog.close();
-        if (longDialog.open) longDialog.close();
       }
     },
   };

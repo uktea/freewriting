@@ -926,63 +926,65 @@ test('storage denial still allows saving but explicitly warns settings will not 
   assert.equal(a.elements.editor.value, obsidianSession().text);
 });
 
-test('long Japanese text requires successful clipboard copy and a separate launch click', async () => {
+test('one click copies long Japanese text and automatically launches after the copy completes', async () => {
   const text = '長文😀 & #\n'.repeat(1000);
-  const a = app(obsidianSession(text), { obsidian: obsidianSettings });
+  let completeCopy;
+  const a = app(obsidianSession(text), {
+    obsidian: obsidianSettings, writeText: () => new Promise((resolve) => { completeCopy = resolve; }),
+  });
   a.elements['obsidian-save'].click();
   assert.equal(a.launches.length, 0);
-  assert.equal(a.copies.length, 0);
-  assert.equal(a.elements['obsidian-long-dialog'].open, true);
-  assert.equal(a.elements['obsidian-open-long'].hidden, true);
-  assert.equal(a.elements['obsidian-check'].hidden, true, 'preparing the clipboard must not show launch feedback');
-  a.elements['obsidian-copy-long'].click();
-  await new Promise(setImmediate);
   assert.deepEqual(a.copies, [text]);
-  assert.equal(a.launches.length, 0, 'awaiting clipboard must not launch');
-  assert.equal(a.elements['obsidian-open-long'].hidden, false);
-  const uri = new URL(a.elements['obsidian-open-long'].href);
+  assert.equal(a.elements['obsidian-long-dialog'], undefined);
+  assert.equal(a.elements['obsidian-save'].disabled, true);
+  assert.equal(a.elements['obsidian-check'].hidden, true, 'preparing the clipboard must not show launch feedback');
+  a.elements['obsidian-save'].click();
+  assert.equal(a.copies.length, 1, 'ignore clicks while the clipboard is pending');
+  completeCopy();
+  await new Promise(setImmediate);
+  assert.equal(a.launches.length, 1);
+  const uri = new URL(a.launches[0]);
   assert.equal(uri.searchParams.get('clipboard'), 'true');
   assert.equal(uri.searchParams.has('content'), false);
   assert.ok(uri.href.length <= 1800);
-  a.elements['obsidian-open-long'].click();
-  assert.equal(a.elements['obsidian-long-dialog'].open, false);
   assert.equal(a.elements['obsidian-check'].hidden, false);
   a.flushTimeouts();
   a.elements['obsidian-save'].click();
-  assert.equal(a.elements['obsidian-long-dialog'].open, true);
-  assert.equal(a.elements['obsidian-open-long'].hidden, true, 'another save must recopy current text');
+  assert.deepEqual(a.copies, [text, text], 'another save must recopy current text');
+  completeCopy();
+  await new Promise(setImmediate);
+  assert.equal(a.launches.length, 2);
 });
 
-test('denied or missing clipboard never exposes a launch link for long text', async () => {
+test('denied or missing clipboard does not launch stale text and allows another save attempt', async () => {
   for (const options of [{ clipboard: false }, { writeText: () => Promise.reject(new Error('Denied')) }]) {
     const a = app(obsidianSession('長'.repeat(1000)), { obsidian: obsidianSettings, ...options });
     a.elements['obsidian-save'].click();
-    a.elements['obsidian-copy-long'].click();
     await new Promise(setImmediate);
     assert.equal(a.launches.length, 0);
-    assert.equal(a.elements['obsidian-open-long'].hidden, true);
-    assert.equal(a.elements['obsidian-copy-long'].disabled, false);
-    assert.match(a.elements['obsidian-long-message'].textContent, /Markdown/);
+    assert.equal(a.elements['obsidian-check'].hidden, true);
+    assert.equal(a.elements['obsidian-save'].disabled, false);
+    assert.equal(a.elements['obsidian-feedback'].hidden, false);
+    assert.match(a.elements['obsidian-message'].textContent, /コピーできません/);
+    assert.equal(a.elements.editor.value, '長'.repeat(1000));
   }
 });
 
-test('delayed long copy cannot arm a launch link after the session is reset', async () => {
+test('delayed long copy cannot open Obsidian after the session is reset', async () => {
   let resolveCopy;
   const a = app(obsidianSession('長'.repeat(1000)), {
     obsidian: obsidianSettings, writeText: () => new Promise((resolve) => { resolveCopy = resolve; }),
   });
   a.elements['obsidian-save'].click();
-  a.elements['obsidian-copy-long'].click();
   a.elements.restart.click();
   resolveCopy();
   await new Promise(setImmediate);
   assert.equal(a.launches.length, 0);
-  assert.equal(a.elements['obsidian-long-dialog'].open, false);
-  assert.equal(a.elements['obsidian-open-long'].hidden, true);
+  assert.equal(a.elements['obsidian-check'].hidden, true);
   assert.equal(a.elements['obsidian-feedback'].hidden, true);
 });
 
-test('an oversized destination and malformed UTF-16 cannot crash or launch a truncated note', () => {
+test('an oversized destination and malformed UTF-16 cannot crash or launch a truncated note', async () => {
   const a = app(obsidianSession(), { obsidian: { vault: 'あ'.repeat(200), folder: 'い'.repeat(200) } });
   a.elements['obsidian-save'].click();
   assert.equal(a.launches.length, 0);
@@ -992,7 +994,9 @@ test('an oversized destination and malformed UTF-16 cannot crash or launch a tru
   const b = app(obsidianSession('\ud800'), { obsidian: obsidianSettings });
   b.elements['obsidian-save'].click();
   assert.equal(b.launches.length, 0);
-  assert.equal(b.elements['obsidian-long-dialog'].open, true);
+  assert.deepEqual(b.copies, ['\ud800']);
+  await new Promise(setImmediate);
+  assert.equal(new URL(b.launches[0]).searchParams.get('clipboard'), 'true');
 });
 
 test('empty and active sessions cannot be exported to Obsidian', () => {
@@ -1004,7 +1008,7 @@ test('empty and active sessions cannot be exported to Obsidian', () => {
   }
 });
 
-test('encoded URI budget includes all parameters and switches exactly above 1800 characters', () => {
+test('encoded URI budget includes all parameters and switches exactly above 1800 characters', async () => {
   const options = { obsidian: { vault: 'V', folder: '' } };
   const baseline = app(obsidianSession('x'), options);
   baseline.elements['obsidian-save'].click();
@@ -1015,5 +1019,7 @@ test('encoded URI budget includes all parameters and switches exactly above 1800
   const tooLong = app(obsidianSession('x'.repeat(1801 - overhead)), options);
   tooLong.elements['obsidian-save'].click();
   assert.equal(tooLong.launches.length, 0);
-  assert.equal(tooLong.elements['obsidian-long-dialog'].open, true);
+  assert.equal(tooLong.copies.length, 1);
+  await new Promise(setImmediate);
+  assert.equal(new URL(tooLong.launches[0]).searchParams.get('clipboard'), 'true');
 });

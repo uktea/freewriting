@@ -314,6 +314,8 @@ function app(saved, options = {}) {
   let clock = 100000;
   const intervals = new Map();
   let intervalId = 0;
+  const timeouts = new Map();
+  let timeoutId = 0;
   const window = new EventTarget();
   const launches = [];
   window.location = { set href(value) { launches.push(value); } };
@@ -336,7 +338,9 @@ function app(saved, options = {}) {
     document, window, console, Blob, URL, navigator,
     Date: class extends Date { static now() { return clock; } },
     setInterval: (fn) => { intervals.set(++intervalId, fn); return intervalId; },
-    clearInterval: (id) => intervals.delete(id), setTimeout: () => {}, clearTimeout: () => {},
+    clearInterval: (id) => intervals.delete(id),
+    setTimeout: (fn) => { timeouts.set(++timeoutId, fn); return timeoutId; },
+    clearTimeout: (id) => timeouts.delete(id),
     localStorage: { getItem: (k) => storage.get(k) || null, setItem: (k, v) => {
       if (options.storageDenied) throw new Error('Storage denied');
       storage.set(k, v);
@@ -346,6 +350,7 @@ function app(saved, options = {}) {
   return {
     elements, document, window, storage, copies, commands, launches,
     advance: (ms) => { clock += ms; for (const fn of [...intervals.values()]) fn(); },
+    flushTimeouts: () => { for (const [id, fn] of [...timeouts]) { timeouts.delete(id); fn(); } },
     state: () => document.body.dataset.state,
   };
 }
@@ -855,11 +860,20 @@ test('first Obsidian save requests settings, then launches with encoded content 
   assert.equal(uri.searchParams.has('overwrite'), false);
   assert.equal(uri.searchParams.has('append'), false);
   assert.deepEqual(JSON.parse(a.storage.get('freewriting-obsidian-v1')), obsidianSettings);
-  assert.equal(a.elements['obsidian-message'].textContent, 'Obsidianで保存を確認してください。');
-  assert.equal(a.elements['obsidian-download'].hidden, false);
+  assert.equal(a.elements['obsidian-feedback'].hidden, true);
+  assert.equal(a.elements['obsidian-logo'].hidden, true);
+  assert.equal(a.elements['obsidian-check'].hidden, false);
+  assert.equal(a.elements['obsidian-save'].attributes['aria-label'], 'Obsidianに起動を依頼しました');
+  assert.equal(a.elements['obsidian-retry'], undefined);
+  assert.equal(a.elements['obsidian-download'], undefined);
   assert.equal(a.elements.editor.value, obsidianSession().text);
   a.elements['obsidian-save'].click();
   assert.equal(a.launches.length, 1, 'ignore double-click');
+  a.flushTimeouts();
+  assert.equal(a.elements['obsidian-logo'].hidden, false);
+  assert.equal(a.elements['obsidian-check'].hidden, true);
+  assert.equal(a.elements['obsidian-save'].disabled, false);
+  assert.equal(a.elements['obsidian-save'].attributes['aria-label'], 'Obsidianに保存');
 });
 
 test('stored settings enable one-click save without changing the clipboard', () => {
@@ -868,9 +882,6 @@ test('stored settings enable one-click save without changing the clipboard', () 
   assert.equal(a.launches.length, 1);
   assert.equal(a.copies.length, 0);
   assert.equal(a.elements['obsidian-dialog'].open, undefined);
-  const retry = a.elements['obsidian-retry'].href;
-  a.elements['obsidian-retry'].click();
-  assert.equal(a.elements['obsidian-retry'].href, retry, 'retry keeps the same target');
   const b = app(obsidianSession(), { obsidian: obsidianSettings });
   b.elements['obsidian-save'].click();
   assert.equal(new URL(b.launches[0]).searchParams.get('file'), new URL(a.launches[0]).searchParams.get('file'));
@@ -923,6 +934,7 @@ test('long Japanese text requires successful clipboard copy and a separate launc
   assert.equal(a.copies.length, 0);
   assert.equal(a.elements['obsidian-long-dialog'].open, true);
   assert.equal(a.elements['obsidian-open-long'].hidden, true);
+  assert.equal(a.elements['obsidian-check'].hidden, true, 'preparing the clipboard must not show launch feedback');
   a.elements['obsidian-copy-long'].click();
   await new Promise(setImmediate);
   assert.deepEqual(a.copies, [text]);
@@ -934,9 +946,11 @@ test('long Japanese text requires successful clipboard copy and a separate launc
   assert.ok(uri.href.length <= 1800);
   a.elements['obsidian-open-long'].click();
   assert.equal(a.elements['obsidian-long-dialog'].open, false);
-  a.elements['obsidian-retry'].click();
+  assert.equal(a.elements['obsidian-check'].hidden, false);
+  a.flushTimeouts();
+  a.elements['obsidian-save'].click();
   assert.equal(a.elements['obsidian-long-dialog'].open, true);
-  assert.equal(a.elements['obsidian-open-long'].hidden, true, 'retry must recopy current text');
+  assert.equal(a.elements['obsidian-open-long'].hidden, true, 'another save must recopy current text');
 });
 
 test('denied or missing clipboard never exposes a launch link for long text', async () => {
@@ -972,8 +986,9 @@ test('an oversized destination and malformed UTF-16 cannot crash or launch a tru
   const a = app(obsidianSession(), { obsidian: { vault: 'あ'.repeat(200), folder: 'い'.repeat(200) } });
   a.elements['obsidian-save'].click();
   assert.equal(a.launches.length, 0);
-  assert.match(a.elements['obsidian-message'].textContent, /名前が長い/);
-  assert.equal(a.elements['obsidian-download'].hidden, false);
+  assert.match(a.elements['obsidian-message'].textContent, /名前が長すぎ/);
+  assert.equal(a.elements['obsidian-feedback'].hidden, false);
+  assert.equal(a.elements['obsidian-check'].hidden, true);
   const b = app(obsidianSession('\ud800'), { obsidian: obsidianSettings });
   b.elements['obsidian-save'].click();
   assert.equal(b.launches.length, 0);

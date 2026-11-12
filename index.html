@@ -61,7 +61,7 @@
       <div id="result-actions" class="result-actions" hidden>
         <button id="restart" class="icon-button" type="button" aria-label="もう一度書く" title="もう一度書く"><img src="./icons/replay.svg" width="20" height="20" alt=""></button>
         <div class="export-actions">
-          <button id="obsidian-save" class="icon-button" type="button" aria-label="Obsidianに保存" title="Obsidianに保存"><img src="./icons/obsidian.svg" width="20" height="20" alt=""></button>
+          <button id="obsidian-save" class="icon-button" type="button" aria-label="Obsidianに保存" title="Obsidianに保存"><img id="obsidian-logo" src="./icons/obsidian.svg" width="20" height="20" alt=""><img id="obsidian-check" src="./icons/check.svg" width="20" height="20" alt="" hidden></button>
           <button id="obsidian-settings" class="icon-button" type="button" aria-label="Obsidianの設定" title="Obsidianの設定"><img src="./icons/settings.svg" width="20" height="20" alt=""></button>
           <button id="copy" class="icon-button" type="button" aria-label="文章をコピー" title="コピー"><img src="./icons/content_copy.svg" width="19" height="19" alt=""></button>
           <button id="save-open" class="icon-button" type="button" aria-label="文章を保存" title="保存"><img src="./icons/download.svg" width="20" height="20" alt=""></button>
@@ -69,10 +69,6 @@
       </div>
       <div id="obsidian-feedback" class="export-feedback" hidden>
         <p id="obsidian-message" role="status" aria-live="polite"></p>
-        <div class="feedback-actions">
-          <a id="obsidian-retry" class="icon-button" aria-label="もう一度Obsidianを開く" title="もう一度Obsidianを開く"><img src="./icons/replay.svg" width="20" height="20" alt=""></a>
-          <button id="obsidian-download" class="icon-button" type="button" aria-label="Markdownをダウンロード" title="Markdownをダウンロード"><img src="./icons/download.svg" width="20" height="20" alt=""></button>
-        </div>
       </div>
       <p id="status" class="sr-only" role="status" aria-live="polite"></p>
     </section>

@@ -63,14 +63,12 @@ dialog h2 { font-size: 19px; font-weight: 500; margin: 24px 0; }
 .plain-button { border: 1px solid #ccc; padding: 11px 18px; background: #eee; font-size: 12px; display: inline-flex; align-items: center; gap: 8px; }
 #save-form label { display: block; font-size: 12px; margin-bottom: 8px; }
 #filename { width: 100%; padding: 10px; border: 1px solid #ccc; font-size: 14px; }
-.text-button { font-size: 12px; }
 .export-feedback { margin: 14px 0; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
 .export-feedback p { margin: 0 0 8px; white-space: pre-line; }
 .dialog-help { font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
 .settings-form label { display: block; font-size: 12px; margin: 18px 0 8px; }
 .settings-form input { width: 100%; padding: 10px; border: 1px solid #ccc; font-size: 14px; }
 .dialog-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
-.dialog-actions a { text-decoration: none; }
 @media (hover: none) { .stepper { visibility: visible; } }
 @media (prefers-reduced-motion: reduce) {
   .time-setting, .time-remaining, #progress-line { transition: none !important; }
